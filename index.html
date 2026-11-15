@@ -35,8 +35,8 @@
     /* Style pour la barre de défilement */
     .custom-scrollbar::-webkit-scrollbar { width: 6px; }
     .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-    .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
-    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 10px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.35); }
   </style>
 </head>
 <body class="bg-[#07101E]">
@@ -55,19 +55,25 @@
     import { getFirestore, collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, writeBatch } from 'firebase/firestore';
 
     // --- Configuration Firebase ---
-    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
     let app, auth, db;
-    try {
+    const isFirebaseEnabled = firebaseConfig && Object.keys(firebaseConfig).length > 0;
+    
+    if (isFirebaseEnabled) {
+      try {
         app = initializeApp(firebaseConfig);
         auth = getAuth(app);
         db = getFirestore(app);
-    } catch(e) {
+      } catch(e) {
         console.error("Firebase init fallback", e);
+      }
     }
     
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const LOCAL_STORAGE_KEY = 'passkeeper_access_codes';
 
     function App() {
+      // --- States ---
       const [user, setUser] = useState(null);
       const [items, setItems] = useState([]);
       const [loading, setLoading] = useState(true);
@@ -83,8 +89,25 @@
       
       const fileInputRef = useRef(null);
 
+      // Helper pour sauvegarder en local quand Firebase n'est pas actif (ex: GitHub Pages)
+      const saveToLocal = (newItems) => {
+        setItems(newItems);
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(newItems));
+      };
+
+      // --- Initialisation Auth ou Chargement Local ---
       useEffect(() => {
-        if (!auth) { setLoading(false); return; }
+        if (!isFirebaseEnabled || !auth) {
+          try {
+            const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+            if (saved) setItems(JSON.parse(saved));
+          } catch (e) {
+            console.error("Erreur lecture locale:", e);
+          }
+          setLoading(false);
+          return;
+        }
+
         const initAuth = async () => {
           try {
             if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -94,6 +117,7 @@
             }
           } catch (error) {
             console.error("Erreur d'authentification:", error);
+            setLoading(false);
           }
         };
         initAuth();
@@ -104,13 +128,19 @@
         return () => unsubscribe();
       }, []);
 
+      // --- Chargement des données Firestore ---
       useEffect(() => {
-        if (!user || !db) return;
+        if (!isFirebaseEnabled || !user || !db) return;
+
         const collectionRef = collection(db, 'artifacts', appId, 'users', user.uid, 'access_codes');
+        
         const unsubscribe = onSnapshot(
           collectionRef,
           (snapshot) => {
-            const fetchedItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const fetchedItems = snapshot.docs.map(doc => ({
+              id: doc.id,
+              ...doc.data()
+            }));
             setItems(fetchedItems);
             setLoading(false);
           },
@@ -119,9 +149,11 @@
             setLoading(false);
           }
         );
+
         return () => unsubscribe();
       }, [user]);
 
+      // --- Filtrage et regroupement des données ---
       const filteredAndGroupedData = useMemo(() => {
         const grouped = items.reduce((acc, item) => {
           const site = item.siteName || 'Inconnu';
@@ -132,7 +164,10 @@
 
         if (!searchQuery) return grouped;
 
-        const normalize = (str) => str ? String(str).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() : "";
+        const normalize = (str) => {
+          return str ? String(str).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() : "";
+        };
+
         const query = normalize(searchQuery);
         const filtered = {};
 
@@ -151,6 +186,7 @@
             filtered[siteName] = matchingSubMenus;
           }
         });
+
         return filtered;
       }, [items, searchQuery]);
 
@@ -159,6 +195,7 @@
         return acc;
       }, {})), [items]);
 
+      // --- Actions ---
       const showToast = (message) => {
         setToastMessage(message);
         setTimeout(() => setToastMessage(''), 3000);
@@ -166,7 +203,16 @@
 
       const handleCopyCode = async (code) => {
         try {
-          await navigator.clipboard.writeText(code);
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(code);
+          } else {
+            const textArea = document.createElement("textarea");
+            textArea.value = code;
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+          }
           showToast("Code copié dans le presse-papier !");
           setSelectedCodeItem(null); 
         } catch (err) {
@@ -176,18 +222,26 @@
 
       const handleAddSubmit = async (e) => {
         e.preventDefault();
-        if (!user || !formData.siteName || !formData.subMenu || !formData.code || !db) {
+        if (!formData.siteName.trim() || !formData.subMenu.trim() || !formData.code.trim()) {
           showToast("Veuillez remplir tous les champs.");
           return;
         }
         setIsSubmitting(true);
+        const newEntry = {
+          siteName: formData.siteName.trim(),
+          subMenu: formData.subMenu.trim(),
+          code: formData.code.trim()
+        };
+
         try {
-          const collectionRef = collection(db, 'artifacts', appId, 'users', user.uid, 'access_codes');
-          await addDoc(collectionRef, {
-            siteName: formData.siteName.trim(),
-            subMenu: formData.subMenu.trim(),
-            code: formData.code.trim()
-          });
+          if (isFirebaseEnabled && user && db) {
+            const collectionRef = collection(db, 'artifacts', appId, 'users', user.uid, 'access_codes');
+            await addDoc(collectionRef, newEntry);
+          } else {
+            // Mode local (GitHub Pages / Mobile)
+            const newItemWithId = { id: Date.now().toString(), ...newEntry };
+            saveToLocal([...items, newItemWithId]);
+          }
           setIsAddModalOpen(false);
           setFormData({ siteName: '', subMenu: '', code: '' });
           showToast("Accès ajouté avec succès !");
@@ -204,20 +258,31 @@
       };
 
       const confirmDelete = async () => {
-        if (!itemToDelete || !user || !db) return;
+        if (!itemToDelete) return;
         try {
-          if (itemToDelete.type === 'item') {
-            await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'access_codes', itemToDelete.id));
-            showToast("Accès supprimé.");
-          } else if (itemToDelete.type === 'site') {
-            const batch = writeBatch(db);
-            const itemsToDelete = items.filter(i => i.siteName === itemToDelete.siteName);
-            itemsToDelete.forEach(item => {
-              const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'access_codes', item.id);
-              batch.delete(docRef);
-            });
-            await batch.commit();
-            showToast("Site entier supprimé.");
+          if (isFirebaseEnabled && user && db) {
+            if (itemToDelete.type === 'item') {
+              await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'access_codes', itemToDelete.id));
+              showToast("Accès supprimé.");
+            } else if (itemToDelete.type === 'site') {
+              const batch = writeBatch(db);
+              const itemsToDelete = items.filter(i => i.siteName === itemToDelete.siteName);
+              itemsToDelete.forEach(item => {
+                const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'access_codes', item.id);
+                batch.delete(docRef);
+              });
+              await batch.commit();
+              showToast("Site entier supprimé.");
+            }
+          } else {
+            // Mode local
+            if (itemToDelete.type === 'item') {
+              saveToLocal(items.filter(i => i.id !== itemToDelete.id));
+              showToast("Accès supprimé.");
+            } else if (itemToDelete.type === 'site') {
+              saveToLocal(items.filter(i => i.siteName !== itemToDelete.siteName));
+              showToast("Site entier supprimé.");
+            }
           }
         } catch (error) {
           console.error("Erreur de suppression:", error);
@@ -236,29 +301,49 @@
 
       const handleEditSubmit = async (e) => {
         e.preventDefault();
-        if (!user || !db) return;
         setIsSubmitting(true);
         try {
-          if (editModal.type === 'site') {
-            const newSiteName = editModal.formData.siteName.trim();
-            if (newSiteName && newSiteName !== editModal.data.siteName) {
-              const batch = writeBatch(db);
-              const itemsToUpdate = items.filter(i => i.siteName === editModal.data.siteName);
-              itemsToUpdate.forEach(item => {
-                const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'access_codes', item.id);
-                batch.update(docRef, { siteName: newSiteName });
+          if (isFirebaseEnabled && user && db) {
+            if (editModal.type === 'site') {
+              const newSiteName = editModal.formData.siteName.trim();
+              if (newSiteName && newSiteName !== editModal.data.siteName) {
+                const batch = writeBatch(db);
+                const itemsToUpdate = items.filter(i => i.siteName === editModal.data.siteName);
+                itemsToUpdate.forEach(item => {
+                  const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'access_codes', item.id);
+                  batch.update(docRef, { siteName: newSiteName });
+                });
+                await batch.commit();
+                showToast("Site modifié avec succès.");
+              }
+            } else if (editModal.type === 'item') {
+              const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'access_codes', editModal.data.id);
+              await updateDoc(docRef, {
+                siteName: editModal.formData.siteName.trim(),
+                subMenu: editModal.formData.subMenu.trim(),
+                code: editModal.formData.code.trim()
               });
-              await batch.commit();
-              showToast("Site modifié avec succès.");
+              showToast("Accès modifié avec succès.");
             }
-          } else if (editModal.type === 'item') {
-            const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'access_codes', editModal.data.id);
-            await updateDoc(docRef, {
-              siteName: editModal.formData.siteName.trim(),
-              subMenu: editModal.formData.subMenu.trim(),
-              code: editModal.formData.code.trim()
-            });
-            showToast("Accès modifié avec succès.");
+          } else {
+            // Mode local
+            if (editModal.type === 'site') {
+              const newSiteName = editModal.formData.siteName.trim();
+              if (newSiteName && newSiteName !== editModal.data.siteName) {
+                const updated = items.map(i => i.siteName === editModal.data.siteName ? { ...i, siteName: newSiteName } : i);
+                saveToLocal(updated);
+                showToast("Site modifié avec succès.");
+              }
+            } else if (editModal.type === 'item') {
+              const updated = items.map(i => i.id === editModal.data.id ? {
+                ...i,
+                siteName: editModal.formData.siteName.trim(),
+                subMenu: editModal.formData.subMenu.trim(),
+                code: editModal.formData.code.trim()
+              } : i);
+              saveToLocal(updated);
+              showToast("Accès modifié avec succès.");
+            }
           }
           setEditModal({ isOpen: false, type: null, data: null, formData: { siteName: '', subMenu: '', code: '' } });
         } catch (error) {
@@ -286,7 +371,7 @@
 
       const handleImport = async (e) => {
         const file = e.target.files[0];
-        if (!file || !user || !db) return;
+        if (!file) return;
         const reader = new FileReader();
         reader.onload = async (event) => {
           try {
@@ -294,14 +379,25 @@
             if (Array.isArray(importedData)) {
               const validItems = importedData.filter(item => item.siteName && item.subMenu && item.code);
               if (validItems.length > 0) {
-                setLoading(true);
-                const batch = writeBatch(db);
-                const collectionRef = collection(db, 'artifacts', appId, 'users', user.uid, 'access_codes');
-                validItems.forEach(item => {
-                  const newDocRef = doc(collectionRef);
-                  batch.set(newDocRef, { siteName: item.siteName, subMenu: item.subMenu, code: item.code });
-                });
-                await batch.commit();
+                if (isFirebaseEnabled && user && db) {
+                  setLoading(true);
+                  const batch = writeBatch(db);
+                  const collectionRef = collection(db, 'artifacts', appId, 'users', user.uid, 'access_codes');
+                  validItems.forEach(item => {
+                    const newDocRef = doc(collectionRef);
+                    batch.set(newDocRef, { siteName: item.siteName, subMenu: item.subMenu, code: item.code });
+                  });
+                  await batch.commit();
+                } else {
+                  // Mode local
+                  const newItemsWithIds = validItems.map((item, idx) => ({
+                    id: (Date.now() + idx).toString(),
+                    siteName: item.siteName,
+                    subMenu: item.subMenu,
+                    code: item.code
+                  }));
+                  saveToLocal([...items, ...newItemsWithIds]);
+                }
                 showToast(`${validItems.length} accès importés !`);
               } else {
                 showToast("Aucune donnée valide trouvée.");
@@ -322,252 +418,418 @@
 
       if (loading) {
         return (
-          <div className="min-h-screen flex flex-col items-center justify-center text-white space-y-4 relative" style={{ backgroundImage: "url('./ai-generated-8783105_640.jpg')", backgroundSize: 'cover', backgroundPosition: 'center' }}>
-            <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm"></div>
-            <div className="z-10 flex flex-col items-center">
-              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-400 mb-4"></div>
-              <p className="text-sm font-medium tracking-wider text-slate-200">Chargement de vos accès...</p>
-            </div>
+          <div translate="no" className="notranslate min-h-screen bg-[#07101E] flex flex-col items-center justify-center text-white space-y-4">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white"></div>
+            <p className="text-sm font-light tracking-wider">Chargement de vos accès...</p>
           </div>
         );
       }
 
       return (
-        <div className="min-h-screen text-slate-800 font-sans selection:bg-blue-200 relative" style={{ backgroundImage: "url('./ai-generated-8783105_640.jpg')", backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed' }}>
-          {/* Calque assombrissant très allégé pour bien voir le fond */}
-          <div className="absolute inset-0 bg-slate-900/10"></div>
-          
-          <div className="max-w-md mx-auto bg-slate-900/20 backdrop-blur-md min-h-screen relative shadow-2xl shadow-black/50 flex flex-col overflow-hidden border-x border-white/5">
+        <div 
+          translate="no" 
+          className="notranslate min-h-screen text-slate-800 font-sans selection:bg-blue-200 bg-cover bg-center bg-fixed relative"
+          style={{ backgroundImage: "url('./ai-generated-8783105_640.jpg')" }}
+        >
+          {/* Voile léger pour laisser ressortir l'image de fond tout en gardant la lisibilité */}
+          <div className="min-h-screen bg-[#07101E]/35 flex flex-col justify-center">
             
-            <header className="px-6 pt-10 pb-4 bg-transparent flex items-center justify-between z-10 sticky top-0 border-b border-white/10">
-              <div className="flex items-center space-x-3">
-                <img src="./ai-generated-8783105_640.jpg" alt="Logo" className="w-10 h-10 rounded-xl object-cover shadow-lg border border-white/20" />
-              </div>
-              <div className="flex items-center space-x-2">
-                <input type="file" accept=".json" ref={fileInputRef} onChange={handleImport} className="hidden" />
-                <button onClick={() => fileInputRef.current?.click()} className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors backdrop-blur-sm shadow-sm" title="Importer une sauvegarde">
-                  <Upload className="h-5 w-5" />
-                </button>
-                <button onClick={handleExport} className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors backdrop-blur-sm shadow-sm" title="Exporter les données">
-                  <Download className="h-5 w-5" />
-                </button>
-              </div>
-            </header>
-
-            <div className="px-6 pb-4 pt-4 z-10 bg-transparent">
-              <div className="relative group">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                  <Search className="h-5 w-5 text-slate-300 group-focus-within:text-blue-400 transition-colors" />
+            <div className="max-w-md w-full mx-auto bg-[#0A1628]/45 backdrop-blur-sm min-h-screen relative shadow-2xl shadow-black/70 flex flex-col overflow-hidden border-x border-white/10">
+              
+              {/* Header avec Logo en haut à gauche et boutons Sauvegarde/Restauration à droite */}
+              <header className="px-6 pt-8 pb-4 bg-[#0A1628]/60 backdrop-blur-md flex items-center justify-between z-10 sticky top-0 border-b border-white/10">
+                <div className="flex items-center">
+                  <img 
+                    src="./ai-generated-8783105_640.jpg" 
+                    alt="Logo" 
+                    onError={(e) => { e.target.onerror = null; e.target.src = 'https://placehold.co/48x48/0A1628/3B82F6?text=ID'; }}
+                    className="h-11 w-11 rounded-xl object-cover shadow-md border border-white/20"
+                  />
                 </div>
-                <input
-                  type="text"
-                  placeholder="Rechercher ville, site, accès..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="block w-full pl-11 pr-4 py-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl text-white placeholder-slate-300 focus:bg-white/20 focus:text-white focus:ring-4 focus:ring-blue-500/30 transition-all duration-300 outline-none shadow-inner"
-                />
-                {searchQuery && (
-                  <button onClick={() => setSearchQuery('')} className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 hover:text-white transition-colors">
-                    <X className="h-4 w-4" />
+                <div className="flex items-center space-x-2">
+                  <input type="file" accept=".json" ref={fileInputRef} onChange={handleImport} className="hidden" />
+                  <button onClick={() => fileInputRef.current?.click()} className="p-2.5 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors backdrop-blur-md" title="Importer une sauvegarde">
+                    <Upload className="h-5 w-5" />
                   </button>
-                )}
-              </div>
-            </div>
-
-            <main className="flex-1 px-4 pb-24 overflow-y-auto space-y-4 custom-scrollbar z-10">
-              {Object.keys(filteredAndGroupedData).length === 0 ? (
-                <div className="text-center py-12 px-6">
-                  <div className="bg-white/10 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 backdrop-blur-md">
-                    <Folder className="h-8 w-8 text-white/80" />
-                  </div>
-                  <p className="text-white font-medium text-lg shadow-black drop-shadow-md">Aucun résultat trouvé</p>
-                  <p className="text-white/80 text-sm mt-2 shadow-black drop-shadow-md">Essayez un autre mot-clé ou ajoutez un nouvel accès.</p>
+                  <button onClick={handleExport} className="p-2.5 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors backdrop-blur-md" title="Exporter les données">
+                    <Download className="h-5 w-5" />
+                  </button>
                 </div>
-              ) : (
-                Object.entries(filteredAndGroupedData).map(([siteName, subMenus], index) => {
-                  const isExpanded = expandedSite === siteName || (searchQuery.length > 0 && subMenus.length > 0);
-                  return (
-                    <div key={siteName} className={`bg-white/95 backdrop-blur-sm rounded-2xl overflow-hidden transition-all duration-300 shadow-lg ${isExpanded ? 'ring-2 ring-blue-500/50 shadow-blue-900/40' : 'hover:shadow-xl'}`} style={{ animationDelay: `${index * 50}ms` }}>
-                      <div className="w-full px-2 sm:px-5 py-3 sm:py-5 flex items-center justify-between bg-transparent">
-                        <button onClick={() => toggleSite(siteName)} className="flex-1 flex items-center space-x-3 sm:space-x-4 focus:outline-none text-left">
-                          <div className="bg-blue-50 p-2 sm:p-2.5 rounded-xl text-blue-600">
-                            <MapPin className="h-5 w-5 sm:h-6 sm:w-6" />
+              </header>
+
+              {/* Barre de recherche */}
+              <div className="px-6 py-4 z-10">
+                <div className="relative group">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <Search className="h-5 w-5 text-slate-300 group-focus-within:text-blue-500 transition-colors" />
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Rechercher ville, site, accès..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="block w-full pl-11 pr-10 py-4 bg-white/15 backdrop-blur-md border border-white/15 rounded-2xl text-white placeholder-slate-300 focus:bg-white focus:text-slate-900 focus:ring-4 focus:ring-blue-500/30 transition-all duration-300 outline-none shadow-lg"
+                  />
+                  {searchQuery && (
+                    <button 
+                      onClick={() => setSearchQuery('')}
+                      className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-300 hover:text-white"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Liste principale */}
+              <main className="flex-1 px-4 pb-24 overflow-y-auto space-y-4 custom-scrollbar">
+                {Object.keys(filteredAndGroupedData).length === 0 ? (
+                  <div className="text-center py-12 px-6 bg-[#0A1628]/40 backdrop-blur-md rounded-3xl mx-2 border border-white/10">
+                    <div className="bg-white/10 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Folder className="h-8 w-8 text-blue-300" />
+                    </div>
+                    <p className="text-white font-medium text-lg">Aucun résultat trouvé</p>
+                    <p className="text-slate-300 text-sm mt-2">Essayez un autre mot-clé ou ajoutez un nouvel accès avec le bouton +.</p>
+                  </div>
+                ) : (
+                  Object.entries(filteredAndGroupedData).map(([siteName, subMenus], index) => {
+                    const isExpanded = expandedSite === siteName || (searchQuery.length > 0 && subMenus.length > 0);
+                    
+                    return (
+                      <div 
+                        key={siteName} 
+                        className={`bg-white/95 backdrop-blur-md rounded-2xl overflow-hidden transition-all duration-300 shadow-lg ${isExpanded ? 'ring-2 ring-blue-500/40 shadow-blue-900/30' : 'hover:shadow-xl'}`}
+                        style={{ animationDelay: `${index * 50}ms` }}
+                      >
+                        {/* En-tête du site */}
+                        <div className="w-full px-3 sm:px-5 py-3.5 sm:py-4 flex items-center justify-between bg-white">
+                          <button 
+                            onClick={() => toggleSite(siteName)}
+                            className="flex-1 flex items-center space-x-3 sm:space-x-4 focus:outline-none text-left min-w-0"
+                          >
+                            <div className="bg-blue-50 p-2.5 rounded-xl text-blue-600 shrink-0">
+                              <MapPin className="h-5 w-5 sm:h-6 sm:w-6" />
+                            </div>
+                            <span className="text-base sm:text-lg font-semibold text-slate-800 truncate">{siteName}</span>
+                          </button>
+                          <div className="flex items-center space-x-1 sm:space-x-1.5 shrink-0">
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); openEditModal('site', { siteName }); }}
+                              className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                              title="Modifier ce site"
+                            >
+                              <Edit3 className="h-4 w-4 sm:h-5 sm:w-5" />
+                            </button>
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); setItemToDelete({ type: 'site', siteName }); }}
+                              className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                              title="Supprimer ce site"
+                            >
+                              <Trash2 className="h-4 w-4 sm:h-5 sm:w-5" />
+                            </button>
+                            <button 
+                              onClick={() => toggleSite(siteName)}
+                              className={`p-1.5 rounded-full transition-colors duration-300 ${isExpanded ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'}`}
+                            >
+                              <ChevronDown className={`h-5 w-5 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} />
+                            </button>
                           </div>
-                          <span className="text-base sm:text-lg font-semibold text-slate-800 truncate">{siteName}</span>
-                        </button>
-                        <div className="flex items-center space-x-1 sm:space-x-2">
-                          <button onClick={(e) => { e.stopPropagation(); openEditModal('site', { siteName }); }} className="p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-full transition-colors" title="Modifier ce site">
-                            <Edit3 className="h-4 w-4 sm:h-5 sm:w-5" />
-                          </button>
-                          <button onClick={(e) => { e.stopPropagation(); setItemToDelete({ type: 'site', siteName }); }} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors" title="Supprimer ce site">
-                            <Trash2 className="h-4 w-4 sm:h-5 sm:w-5" />
-                          </button>
-                          <button onClick={() => toggleSite(siteName)} className={`p-1.5 rounded-full transition-colors duration-300 ${isExpanded ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-400'}`}>
-                            <ChevronDown className={`h-5 w-5 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} />
-                          </button>
+                        </div>
+
+                        {/* Sous-menus */}
+                        <div 
+                          className={`transition-all duration-300 ease-in-out bg-slate-50/90 border-t border-slate-100 ${isExpanded ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0 overflow-hidden'}`}
+                        >
+                          {subMenus.map((sub) => (
+                            <div
+                              key={sub.id}
+                              className="w-full flex items-center justify-between hover:bg-blue-50/80 focus-within:bg-blue-100 transition-colors border-b border-slate-200/60 last:border-0"
+                            >
+                              <button
+                                onClick={() => setSelectedCodeItem(sub)}
+                                className="flex-1 px-4 sm:px-6 py-4 flex items-center justify-between focus:outline-none text-left min-w-0"
+                              >
+                                <span className="font-medium text-slate-700 truncate pr-2">{sub.subMenu}</span>
+                                <ChevronRight className="h-4 w-4 text-slate-400 shrink-0" />
+                              </button>
+                              <div className="flex items-center pr-2 shrink-0">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); openEditModal('item', sub); }}
+                                  className="p-2.5 text-slate-400 hover:text-blue-600 transition-colors"
+                                  title="Modifier ce code"
+                                >
+                                  <Edit3 className="h-4 w-4 sm:h-5 sm:w-5" />
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setItemToDelete({ type: 'item', id: sub.id, subMenu: sub.subMenu }); }}
+                                  className="p-2.5 text-slate-400 hover:text-red-500 transition-colors"
+                                  title="Supprimer ce code"
+                                >
+                                  <Trash2 className="h-4 w-4 sm:h-5 sm:w-5" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
-                      <div className={`transition-all duration-300 ease-in-out bg-slate-50 border-t border-slate-100 ${isExpanded ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0'}`}>
-                        {subMenus.map((sub) => (
-                          <div key={sub.id} className="w-full flex items-center justify-between hover:bg-blue-50 focus-within:bg-blue-100 transition-colors border-b border-slate-200/50 last:border-0">
-                            <button onClick={() => setSelectedCodeItem(sub)} className="flex-1 px-4 sm:px-6 py-4 flex items-center justify-between focus:outline-none text-left">
-                              <span className="font-medium text-slate-700">{sub.subMenu}</span>
-                              <ChevronRight className="h-4 w-4 text-slate-400 mr-2" />
-                            </button>
-                            <div className="flex items-center pr-2">
-                              <button onClick={(e) => { e.stopPropagation(); openEditModal('item', sub); }} className="p-3 text-slate-300 hover:text-blue-500 transition-colors" title="Modifier ce code">
-                                <Edit3 className="h-4 w-4 sm:h-5 sm:w-5" />
-                              </button>
-                              <button onClick={(e) => { e.stopPropagation(); setItemToDelete({ type: 'item', id: sub.id, subMenu: sub.subMenu }); }} className="p-3 text-slate-300 hover:text-red-500 transition-colors" title="Supprimer ce code">
-                                <Trash2 className="h-4 w-4 sm:h-5 sm:w-5" />
-                              </button>
-                            </div>
-                          </div>
-                        ))}
+                    );
+                  })
+                )}
+              </main>
+
+              {/* Bouton flottant d'ajout (+) */}
+              <button
+                onClick={() => setIsAddModalOpen(true)}
+                className="fixed sm:absolute bottom-6 right-6 h-14 w-14 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-500/40 flex items-center justify-center hover:bg-blue-500 active:scale-95 transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-blue-500/30 z-20"
+              >
+                <Plus className="h-7 w-7" />
+              </button>
+
+              {/* Modale d'affichage du code */}
+              {selectedCodeItem && (
+                <div className="fixed sm:absolute inset-0 z-50 flex items-end sm:items-center justify-center">
+                  <div 
+                    className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
+                    onClick={() => setSelectedCodeItem(null)}
+                  ></div>
+                  <div className="bg-white w-full sm:w-[90%] rounded-t-3xl sm:rounded-3xl p-6 sm:p-8 relative z-10 shadow-2xl">
+                    <button 
+                      onClick={() => setSelectedCodeItem(null)}
+                      className="absolute top-4 right-4 p-2 bg-slate-100 text-slate-500 rounded-full hover:bg-slate-200 transition-colors"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
+                    
+                    <div className="text-center mb-8 mt-4">
+                      <div className="bg-blue-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600">
+                        <LockKeyhole className="h-8 w-8" />
                       </div>
+                      <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-1">{selectedCodeItem.siteName}</h3>
+                      <h2 className="text-2xl font-bold text-slate-800">{selectedCodeItem.subMenu}</h2>
                     </div>
-                  );
-                })
+                    
+                    <div className="bg-slate-50 border-2 border-slate-100 rounded-2xl p-6 text-center mb-6">
+                      <p className="text-4xl sm:text-5xl font-black text-slate-800 tracking-widest break-all">{selectedCodeItem.code}</p>
+                    </div>
+
+                    <button
+                      onClick={() => handleCopyCode(selectedCodeItem.code)}
+                      className="w-full py-4 bg-slate-900 text-white rounded-xl font-semibold text-lg flex items-center justify-center space-x-2 hover:bg-slate-800 active:scale-[0.98] transition-all shadow-lg"
+                    >
+                      <Copy className="h-5 w-5" />
+                      <span>Copier le code</span>
+                    </button>
+                  </div>
+                </div>
               )}
-            </main>
 
-            <button onClick={() => setIsAddModalOpen(true)} className="absolute bottom-6 right-6 h-14 w-14 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-500/40 flex items-center justify-center hover:bg-blue-500 active:scale-95 transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-blue-500/30 z-20">
-              <Plus className="h-7 w-7" />
-            </button>
-
-            {selectedCodeItem && (
-              <div className="absolute inset-0 z-50 flex items-end sm:items-center justify-center">
-                <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={() => setSelectedCodeItem(null)}></div>
-                <div className="bg-white w-full sm:w-[90%] rounded-t-3xl sm:rounded-3xl p-6 sm:p-8 relative z-10 shadow-2xl animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 sm:fade-in duration-300">
-                  <button onClick={() => setSelectedCodeItem(null)} className="absolute top-4 right-4 p-2 bg-slate-100 text-slate-500 rounded-full hover:bg-slate-200 transition-colors">
-                    <X className="h-5 w-5" />
-                  </button>
-                  <div className="text-center mb-8 mt-4">
-                    <div className="bg-blue-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600">
-                      <LockKeyhole className="h-8 w-8" />
+              {/* Modale d'ajout */}
+              {isAddModalOpen && (
+                <div className="fixed sm:absolute inset-0 z-50 flex flex-col justify-end sm:justify-center p-0 sm:p-6">
+                  <div 
+                    className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                    onClick={() => setIsAddModalOpen(false)}
+                  ></div>
+                  <div className="bg-white w-full h-[85vh] sm:h-auto rounded-t-3xl sm:rounded-3xl relative z-10 shadow-2xl flex flex-col">
+                    
+                    <div className="flex items-center justify-between p-6 border-b border-slate-100">
+                      <h2 className="text-xl font-bold text-slate-800 flex items-center">
+                        <Plus className="h-5 w-5 mr-2 text-blue-600" /> Ajouter un accès
+                      </h2>
+                      <button onClick={() => setIsAddModalOpen(false)} className="p-2 bg-slate-100 rounded-full text-slate-500">
+                        <X className="h-5 w-5" />
+                      </button>
                     </div>
-                    <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-1">{selectedCodeItem.siteName}</h3>
-                    <h2 className="text-2xl font-bold text-slate-800">{selectedCodeItem.subMenu}</h2>
-                  </div>
-                  <div className="bg-slate-50 border-2 border-slate-100 rounded-2xl p-6 text-center mb-6">
-                    <p className="text-5xl font-black text-slate-800 tracking-widest">{selectedCodeItem.code}</p>
-                  </div>
-                  <button onClick={() => handleCopyCode(selectedCodeItem.code)} className="w-full py-4 bg-slate-900 text-white rounded-xl font-semibold text-lg flex items-center justify-center space-x-2 hover:bg-slate-800 active:scale-[0.98] transition-all shadow-lg">
-                    <Copy className="h-5 w-5" />
-                    <span>Copier le code</span>
-                  </button>
-                </div>
-              </div>
-            )}
 
-            {isAddModalOpen && (
-              <div className="absolute inset-0 z-50 flex flex-col justify-end sm:justify-center p-0 sm:p-6">
-                <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsAddModalOpen(false)}></div>
-                <div className="bg-white w-full h-[85vh] sm:h-auto rounded-t-3xl sm:rounded-3xl relative z-10 shadow-2xl flex flex-col animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 duration-300">
-                  <div className="flex items-center justify-between p-6 border-b border-slate-100">
-                    <h2 className="text-xl font-bold text-slate-800 flex items-center">
-                      <Plus className="h-5 w-5 mr-2 text-blue-600" /> Ajouter un accès
-                    </h2>
-                    <button onClick={() => setIsAddModalOpen(false)} className="p-2 bg-slate-100 rounded-full text-slate-500">
-                      <X className="h-5 w-5" />
-                    </button>
-                  </div>
-                  <div className="p-6 flex-1 overflow-y-auto">
-                    <form id="add-form" onSubmit={handleAddSubmit} className="space-y-6">
-                      <div className="space-y-2">
-                        <label className="text-sm font-semibold text-slate-700 ml-1">Ville ou Site</label>
-                        <input list="sites-list" required placeholder="Ex: Beaupreau" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" value={formData.siteName} onChange={(e) => setFormData({...formData, siteName: e.target.value})} />
-                        <datalist id="sites-list">{uniqueSites.map(site => <option key={site} value={site} />)}</datalist>
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-semibold text-slate-700 ml-1">Nom de l'accès / Sous-menu</label>
-                        <input required placeholder="Ex: Local Biomasse" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" value={formData.subMenu} onChange={(e) => setFormData({...formData, subMenu: e.target.value})} />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-semibold text-slate-700 ml-1">Code d'accès</label>
-                        <input required placeholder="Ex: 1234, 4321A..." className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all font-mono text-lg" value={formData.code} onChange={(e) => setFormData({...formData, code: e.target.value})} />
-                      </div>
-                    </form>
-                  </div>
-                  <div className="p-6 border-t border-slate-100 bg-slate-50/50 rounded-b-3xl">
-                    <button type="submit" form="add-form" disabled={isSubmitting} className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold text-lg hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-70 flex justify-center items-center shadow-lg shadow-blue-500/30">
-                      {isSubmitting ? <span className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></span> : "Enregistrer l'accès"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
+                    <div className="p-6 flex-1 overflow-y-auto">
+                      <form id="add-form" onSubmit={handleAddSubmit} className="space-y-6">
+                        <div className="space-y-2">
+                          <label className="text-sm font-semibold text-slate-700 ml-1">Ville ou Site</label>
+                          <input
+                            list="sites-list"
+                            required
+                            placeholder="Ex: Beaupreau"
+                            className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                            value={formData.siteName}
+                            onChange={(e) => setFormData({...formData, siteName: e.target.value})}
+                          />
+                          <datalist id="sites-list">
+                            {uniqueSites.map(site => <option key={site} value={site} />)}
+                          </datalist>
+                        </div>
 
-            {editModal.isOpen && (
-              <div className="absolute inset-0 z-50 flex flex-col justify-end sm:justify-center p-0 sm:p-6">
-                <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setEditModal({ ...editModal, isOpen: false })}></div>
-                <div className="bg-white w-full h-[85vh] sm:h-auto rounded-t-3xl sm:rounded-3xl relative z-10 shadow-2xl flex flex-col animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 duration-300">
-                  <div className="flex items-center justify-between p-6 border-b border-slate-100">
-                    <h2 className="text-xl font-bold text-slate-800 flex items-center">
-                      <Edit3 className="h-5 w-5 mr-2 text-blue-600" /> {editModal.type === 'site' ? "Modifier le site" : "Modifier l'accès"}
-                    </h2>
-                    <button onClick={() => setEditModal({ ...editModal, isOpen: false })} className="p-2 bg-slate-100 rounded-full text-slate-500">
-                      <X className="h-5 w-5" />
-                    </button>
-                  </div>
-                  <div className="p-6 flex-1 overflow-y-auto">
-                    <form id="edit-form" onSubmit={handleEditSubmit} className="space-y-6">
-                      <div className="space-y-2">
-                        <label className="text-sm font-semibold text-slate-700 ml-1">Ville ou Site</label>
-                        <input list="sites-list-edit" required className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" value={editModal.formData.siteName} onChange={(e) => setEditModal({ ...editModal, formData: { ...editModal.formData, siteName: e.target.value } })} />
-                        <datalist id="sites-list-edit">{uniqueSites.map(site => <option key={site} value={site} />)}</datalist>
-                        {editModal.type === 'site' && <p className="text-xs text-slate-500 mt-1 ml-1">Modifier ce nom mettra à jour tous les accès associés à ce site.</p>}
-                      </div>
-                      {editModal.type === 'item' && (
-                        <>
-                          <div className="space-y-2">
-                            <label className="text-sm font-semibold text-slate-700 ml-1">Nom de l'accès / Sous-menu</label>
-                            <input required className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" value={editModal.formData.subMenu} onChange={(e) => setEditModal({ ...editModal, formData: { ...editModal.formData, subMenu: e.target.value } })} />
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-sm font-semibold text-slate-700 ml-1">Code d'accès</label>
-                            <input required className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all font-mono text-lg" value={editModal.formData.code} onChange={(e) => setEditModal({ ...editModal, formData: { ...editModal.formData, code: e.target.value } })} />
-                          </div>
-                        </>
-                      )}
-                    </form>
-                  </div>
-                  <div className="p-6 border-t border-slate-100 bg-slate-50/50 rounded-b-3xl">
-                    <button type="submit" form="edit-form" disabled={isSubmitting} className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold text-lg hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-70 flex justify-center items-center shadow-lg shadow-blue-500/30">
-                      {isSubmitting ? <span className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></span> : "Sauvegarder"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
+                        <div className="space-y-2">
+                          <label className="text-sm font-semibold text-slate-700 ml-1">Nom de l'accès / Sous-menu</label>
+                          <input
+                            required
+                            placeholder="Ex: Local Biomasse"
+                            className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                            value={formData.subMenu}
+                            onChange={(e) => setFormData({...formData, subMenu: e.target.value})}
+                          />
+                        </div>
 
-            {itemToDelete && (
-              <div className="absolute inset-0 z-[60] flex items-center justify-center p-4">
-                <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={() => setItemToDelete(null)}></div>
-                <div className="bg-white w-full max-w-sm rounded-3xl p-6 relative z-10 shadow-2xl animate-in zoom-in-95 duration-200">
-                  <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4 text-red-600">
-                    <AlertTriangle className="h-6 w-6" />
-                  </div>
-                  <h3 className="text-xl font-bold text-center text-slate-800 mb-2">Confirmer la suppression</h3>
-                  <p className="text-center text-slate-500 mb-6 text-sm sm:text-base">
-                    Êtes-vous sûr de vouloir supprimer {itemToDelete.type === 'site' ? <strong>tout le site "{itemToDelete.siteName}"</strong> : <strong>l'accès "{itemToDelete.subMenu}"</strong>} ? Cette action est irréversible.
-                  </p>
-                  <div className="flex space-x-3">
-                    <button onClick={() => setItemToDelete(null)} className="flex-1 py-3 bg-slate-100 text-slate-700 font-semibold rounded-xl hover:bg-slate-200 transition-colors">Annuler</button>
-                    <button onClick={confirmDelete} className="flex-1 py-3 bg-red-600 text-white font-semibold rounded-xl hover:bg-red-700 transition-colors">Supprimer</button>
+                        <div className="space-y-2">
+                          <label className="text-sm font-semibold text-slate-700 ml-1">Code d'accès</label>
+                          <input
+                            required
+                            placeholder="Ex: 1234, 4321A..."
+                            className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all font-mono text-lg"
+                            value={formData.code}
+                            onChange={(e) => setFormData({...formData, code: e.target.value})}
+                          />
+                        </div>
+                      </form>
+                    </div>
+                    
+                    <div className="p-6 border-t border-slate-100 bg-slate-50/50 rounded-b-3xl">
+                      <button
+                        type="submit"
+                        form="add-form"
+                        disabled={isSubmitting}
+                        className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold text-lg hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-70 flex justify-center items-center shadow-lg shadow-blue-500/30"
+                      >
+                        {isSubmitting ? (
+                          <span className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></span>
+                        ) : (
+                          "Enregistrer l'accès"
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {toastMessage && (
-              <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4 duration-300">
-                <div className="bg-slate-900 text-white px-6 py-3 rounded-full shadow-2xl flex items-center space-x-2 font-medium whitespace-nowrap">
-                  <CheckCircle2 className="h-5 w-5 text-green-400" />
-                  <span>{toastMessage}</span>
+              {/* Modale de modification */}
+              {editModal.isOpen && (
+                <div className="fixed sm:absolute inset-0 z-50 flex flex-col justify-end sm:justify-center p-0 sm:p-6">
+                  <div 
+                    className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                    onClick={() => setEditModal({ ...editModal, isOpen: false })}
+                  ></div>
+                  <div className="bg-white w-full h-[85vh] sm:h-auto rounded-t-3xl sm:rounded-3xl relative z-10 shadow-2xl flex flex-col">
+                    
+                    <div className="flex items-center justify-between p-6 border-b border-slate-100">
+                      <h2 className="text-xl font-bold text-slate-800 flex items-center">
+                        <Edit3 className="h-5 w-5 mr-2 text-blue-600" /> 
+                        {editModal.type === 'site' ? "Modifier le site" : "Modifier l'accès"}
+                      </h2>
+                      <button onClick={() => setEditModal({ ...editModal, isOpen: false })} className="p-2 bg-slate-100 rounded-full text-slate-500">
+                        <X className="h-5 w-5" />
+                      </button>
+                    </div>
+
+                    <div className="p-6 flex-1 overflow-y-auto">
+                      <form id="edit-form" onSubmit={handleEditSubmit} className="space-y-6">
+                        
+                        <div className="space-y-2">
+                          <label className="text-sm font-semibold text-slate-700 ml-1">Ville ou Site</label>
+                          <input
+                            list="sites-list-edit"
+                            required
+                            className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                            value={editModal.formData.siteName}
+                            onChange={(e) => setEditModal({ ...editModal, formData: { ...editModal.formData, siteName: e.target.value } })}
+                          />
+                          <datalist id="sites-list-edit">
+                            {uniqueSites.map(site => <option key={site} value={site} />)}
+                          </datalist>
+                          {editModal.type === 'site' && (
+                            <p className="text-xs text-slate-500 mt-1 ml-1">
+                              Modifier ce nom mettra à jour tous les accès associés à ce site.
+                            </p>
+                          )}
+                        </div>
+
+                        {editModal.type === 'item' && (
+                          <>
+                            <div className="space-y-2">
+                              <label className="text-sm font-semibold text-slate-700 ml-1">Nom de l'accès / Sous-menu</label>
+                              <input
+                                required
+                                className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                value={editModal.formData.subMenu}
+                                onChange={(e) => setEditModal({ ...editModal, formData: { ...editModal.formData, subMenu: e.target.value } })}
+                              />
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className="text-sm font-semibold text-slate-700 ml-1">Code d'accès</label>
+                              <input
+                                required
+                                className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all font-mono text-lg"
+                                value={editModal.formData.code}
+                                onChange={(e) => setEditModal({ ...editModal, formData: { ...editModal.formData, code: e.target.value } })}
+                              />
+                            </div>
+                          </>
+                        )}
+                      </form>
+                    </div>
+                    
+                    <div className="p-6 border-t border-slate-100 bg-slate-50/50 rounded-b-3xl">
+                      <button
+                        type="submit"
+                        form="edit-form"
+                        disabled={isSubmitting}
+                        className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold text-lg hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-70 flex justify-center items-center shadow-lg shadow-blue-500/30"
+                      >
+                        {isSubmitting ? (
+                          <span className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></span>
+                        ) : (
+                          "Sauvegarder"
+                        )}
+                      </button>
+                    </div>
+
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+
+              {/* Modale de confirmation de suppression */}
+              {itemToDelete && (
+                <div className="fixed sm:absolute inset-0 z-[60] flex items-center justify-center p-4">
+                  <div 
+                    className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
+                    onClick={() => setItemToDelete(null)}
+                  ></div>
+                  <div className="bg-white w-full max-w-sm rounded-3xl p-6 relative z-10 shadow-2xl">
+                    <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4 text-red-600">
+                      <AlertTriangle className="h-6 w-6" />
+                    </div>
+                    <h3 className="text-xl font-bold text-center text-slate-800 mb-2">Confirmer la suppression</h3>
+                    <p className="text-center text-slate-500 mb-6 text-sm sm:text-base">
+                      Êtes-vous sûr de vouloir supprimer {itemToDelete.type === 'site' ? <strong>tout le site "{itemToDelete.siteName}"</strong> : <strong>l'accès "{itemToDelete.subMenu}"</strong>} ? Cette action est irréversible.
+                    </p>
+                    <div className="flex space-x-3">
+                      <button 
+                        onClick={() => setItemToDelete(null)}
+                        className="flex-1 py-3 bg-slate-100 text-slate-700 font-semibold rounded-xl hover:bg-slate-200 transition-colors"
+                      >
+                        Annuler
+                      </button>
+                      <button 
+                        onClick={confirmDelete}
+                        className="flex-1 py-3 bg-red-600 text-white font-semibold rounded-xl hover:bg-red-700 transition-colors"
+                      >
+                        Supprimer
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Notification Toast */}
+              {toastMessage && (
+                <div className="fixed sm:absolute top-6 left-1/2 -translate-x-1/2 z-50">
+                  <div className="bg-slate-900 text-white px-6 py-3 rounded-full shadow-2xl flex items-center space-x-2 font-medium whitespace-nowrap">
+                    <CheckCircle2 className="h-5 w-5 text-green-400" />
+                    <span>{toastMessage}</span>
+                  </div>
+                </div>
+              )}
+
+            </div>
           </div>
         </div>
       );
