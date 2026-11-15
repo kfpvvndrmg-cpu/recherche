@@ -1,696 +1,565 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, Plus, X, Copy, ChevronDown, ChevronRight, MapPin, CheckCircle2, LockKeyhole, Folder, Trash2, AlertTriangle, Edit3, Download, Upload } from 'lucide-react';
-
-// --- Imports Firebase ---
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, writeBatch } from 'firebase/firestore';
-
-// --- Configuration Firebase ---
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-
-export default function App() {
-  // --- States ---
-  const [user, setUser] = useState(null);
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [expandedSite, setExpandedSite] = useState(null);
-  const [toastMessage, setToastMessage] = useState('');
-  const [selectedCodeItem, setSelectedCodeItem] = useState(null);
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [formData, setFormData] = useState({ siteName: '', subMenu: '', code: '' });
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [itemToDelete, setItemToDelete] = useState(null);
-  const [editModal, setEditModal] = useState({ isOpen: false, type: null, data: null, formData: { siteName: '', subMenu: '', code: '' } });
+<!DOCTYPE html>
+<html lang="fr" translate="no">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PassKeeper</title>
   
-  const fileInputRef = useRef(null);
-
-  // --- Initialisation Firebase Auth ---
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (error) {
-        console.error("Erreur d'authentification:", error);
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Configuration pour charger les modules (React, Icones, Firebase) depuis le navigateur -->
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.292.0?deps=react@18.2.0",
+        "firebase/app": "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js",
+        "firebase/auth": "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js"
       }
-    };
-    initAuth();
+    }
+  </script>
+  
+  <!-- Babel (pour traduire le code React/JSX dans le navigateur) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-    });
-    return () => unsubscribe();
-  }, []);
+  <style>
+    /* Style pour la barre de défilement */
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+  </style>
+</head>
+<body class="bg-[#07101E]">
+  
+  <!-- C'est ici que l'application React va s'afficher -->
+  <div id="root"></div>
 
-  // --- Chargement des données Firestore ---
-  useEffect(() => {
-    if (!user) return;
+  <!-- Script principal de l'application -->
+  <script type="text/babel" data-type="module">
+    import React, { useState, useEffect, useMemo, useRef } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { Search, Plus, X, Copy, ChevronDown, ChevronRight, MapPin, CheckCircle2, LockKeyhole, Folder, Trash2, AlertTriangle, Edit3, Download, Upload } from 'lucide-react';
 
-    const collectionRef = collection(db, 'artifacts', appId, 'users', user.uid, 'access_codes');
+    import { initializeApp } from 'firebase/app';
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+    import { getFirestore, collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, writeBatch } from 'firebase/firestore';
+
+    // --- Configuration Firebase ---
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+    let app, auth, db;
+    try {
+        app = initializeApp(firebaseConfig);
+        auth = getAuth(app);
+        db = getFirestore(app);
+    } catch(e) {
+        console.error("Firebase init fallback", e);
+    }
     
-    const unsubscribe = onSnapshot(
-      collectionRef,
-      (snapshot) => {
-        const fetchedItems = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        setItems(fetchedItems);
-        setLoading(false);
-      },
-      (error) => {
-        console.error("Erreur Firestore:", error);
-        setLoading(false);
-      }
-    );
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-    return () => unsubscribe();
-  }, [user]);
-
-  // --- Data Transformation & Filtering ---
-  const filteredAndGroupedData = useMemo(() => {
-    const grouped = items.reduce((acc, item) => {
-      const site = item.siteName || 'Inconnu';
-      if (!acc[site]) acc[site] = [];
-      acc[site].push(item);
-      return acc;
-    }, {});
-
-    if (!searchQuery) return grouped;
-
-    const normalize = (str) => {
-      return str ? String(str).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() : "";
-    };
-
-    const query = normalize(searchQuery);
-    const filtered = {};
-
-    Object.entries(grouped).forEach(([siteName, subMenus]) => {
-      const siteMatches = normalize(siteName).includes(query);
-      const safeSubMenus = Array.isArray(subMenus) ? subMenus : [];
+    function App() {
+      const [user, setUser] = useState(null);
+      const [items, setItems] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [searchQuery, setSearchQuery] = useState('');
+      const [expandedSite, setExpandedSite] = useState(null);
+      const [toastMessage, setToastMessage] = useState('');
+      const [selectedCodeItem, setSelectedCodeItem] = useState(null);
+      const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+      const [formData, setFormData] = useState({ siteName: '', subMenu: '', code: '' });
+      const [isSubmitting, setIsSubmitting] = useState(false);
+      const [itemToDelete, setItemToDelete] = useState(null);
+      const [editModal, setEditModal] = useState({ isOpen: false, type: null, data: null, formData: { siteName: '', subMenu: '', code: '' } });
       
-      const matchingSubMenus = safeSubMenus.filter(sub => 
-        (sub && sub.subMenu && normalize(sub.subMenu).includes(query)) ||
-        (sub && sub.code && normalize(sub.code).includes(query))
-      );
+      const fileInputRef = useRef(null);
 
-      if (siteMatches) {
-        filtered[siteName] = safeSubMenus;
-      } else if (matchingSubMenus.length > 0) {
-        filtered[siteName] = matchingSubMenus;
-      }
-    });
-
-    return filtered;
-  }, [items, searchQuery]);
-
-  const uniqueSites = useMemo(() => Object.keys(items.reduce((acc, item) => {
-    if (item.siteName) acc[item.siteName] = true;
-    return acc;
-  }, {})), [items]);
-
-  // --- Actions ---
-  const showToast = (message) => {
-    setToastMessage(message);
-    setTimeout(() => setToastMessage(''), 3000);
-  };
-
-  const handleCopyCode = async (code) => {
-    try {
-      await navigator.clipboard.writeText(code);
-      showToast("Code copié dans le presse-papier !");
-      setSelectedCodeItem(null); 
-    } catch (err) {
-      showToast("Erreur lors de la copie.");
-    }
-  };
-
-  const handleAddSubmit = async (e) => {
-    e.preventDefault();
-    if (!user || !formData.siteName || !formData.subMenu || !formData.code) {
-      showToast("Veuillez remplir tous les champs.");
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      const collectionRef = collection(db, 'artifacts', appId, 'users', user.uid, 'access_codes');
-      await addDoc(collectionRef, {
-        siteName: formData.siteName.trim(),
-        subMenu: formData.subMenu.trim(),
-        code: formData.code.trim()
-      });
-      setIsAddModalOpen(false);
-      setFormData({ siteName: '', subMenu: '', code: '' });
-      showToast("Accès ajouté avec succès !");
-    } catch (error) {
-      console.error("Erreur d'ajout:", error);
-      showToast("Erreur lors de l'ajout.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const toggleSite = (siteName) => {
-    setExpandedSite(expandedSite === siteName ? null : siteName);
-  };
-
-  const confirmDelete = async () => {
-    if (!itemToDelete || !user) return;
-    
-    try {
-      if (itemToDelete.type === 'item') {
-        await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'access_codes', itemToDelete.id));
-        showToast("Accès supprimé.");
-      } else if (itemToDelete.type === 'site') {
-        const batch = writeBatch(db);
-        const itemsToDelete = items.filter(i => i.siteName === itemToDelete.siteName);
-        itemsToDelete.forEach(item => {
-          const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'access_codes', item.id);
-          batch.delete(docRef);
-        });
-        await batch.commit();
-        showToast("Site entier supprimé.");
-      }
-    } catch (error) {
-      console.error("Erreur de suppression:", error);
-      showToast("Erreur lors de la suppression.");
-    }
-    
-    setItemToDelete(null);
-  };
-
-  const openEditModal = (type, data) => {
-    if (type === 'site') {
-      setEditModal({ isOpen: true, type, data, formData: { siteName: data.siteName, subMenu: '', code: '' } });
-    } else {
-      setEditModal({ isOpen: true, type, data, formData: { siteName: data.siteName, subMenu: data.subMenu, code: data.code } });
-    }
-  };
-
-  const handleEditSubmit = async (e) => {
-    e.preventDefault();
-    if (!user) return;
-    setIsSubmitting(true);
-    
-    try {
-      if (editModal.type === 'site') {
-        const newSiteName = editModal.formData.siteName.trim();
-        if (newSiteName && newSiteName !== editModal.data.siteName) {
-          const batch = writeBatch(db);
-          const itemsToUpdate = items.filter(i => i.siteName === editModal.data.siteName);
-          itemsToUpdate.forEach(item => {
-            const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'access_codes', item.id);
-            batch.update(docRef, { siteName: newSiteName });
-          });
-          await batch.commit();
-          showToast("Site modifié avec succès.");
-        }
-      } else if (editModal.type === 'item') {
-        const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'access_codes', editModal.data.id);
-        await updateDoc(docRef, {
-          siteName: editModal.formData.siteName.trim(),
-          subMenu: editModal.formData.subMenu.trim(),
-          code: editModal.formData.code.trim()
-        });
-        showToast("Accès modifié avec succès.");
-      }
-      setEditModal({ isOpen: false, type: null, data: null, formData: { siteName: '', subMenu: '', code: '' } });
-    } catch (error) {
-      console.error("Erreur de modification:", error);
-      showToast("Erreur lors de la modification.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleExport = () => {
-    const exportData = items.map(({ id, ...rest }) => rest);
-    const dataStr = JSON.stringify(exportData, null, 2);
-    const blob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'sauvegarde_acces.json';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    showToast("Sauvegarde exportée !");
-  };
-
-  const handleImport = async (e) => {
-    const file = e.target.files[0];
-    if (!file || !user) return;
-
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const importedData = JSON.parse(event.target.result);
-        if (Array.isArray(importedData)) {
-          const validItems = importedData.filter(item => item.siteName && item.subMenu && item.code);
-          
-          if (validItems.length > 0) {
-            setLoading(true);
-            const batch = writeBatch(db);
-            const collectionRef = collection(db, 'artifacts', appId, 'users', user.uid, 'access_codes');
-            
-            validItems.forEach(item => {
-              const newDocRef = doc(collectionRef);
-              batch.set(newDocRef, {
-                siteName: item.siteName,
-                subMenu: item.subMenu,
-                code: item.code
-              });
-            });
-            
-            await batch.commit();
-            showToast(`${validItems.length} accès importés !`);
-          } else {
-            showToast("Aucune donnée valide trouvée.");
+      useEffect(() => {
+        if (!auth) { setLoading(false); return; }
+        const initAuth = async () => {
+          try {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+              await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+              await signInAnonymously(auth);
+            }
+          } catch (error) {
+            console.error("Erreur d'authentification:", error);
           }
-        } else {
-          showToast("Format de fichier invalide.");
+        };
+        initAuth();
+
+        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+          setUser(currentUser);
+        });
+        return () => unsubscribe();
+      }, []);
+
+      useEffect(() => {
+        if (!user || !db) return;
+        const collectionRef = collection(db, 'artifacts', appId, 'users', user.uid, 'access_codes');
+        const unsubscribe = onSnapshot(
+          collectionRef,
+          (snapshot) => {
+            const fetchedItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setItems(fetchedItems);
+            setLoading(false);
+          },
+          (error) => {
+            console.error("Erreur Firestore:", error);
+            setLoading(false);
+          }
+        );
+        return () => unsubscribe();
+      }, [user]);
+
+      const filteredAndGroupedData = useMemo(() => {
+        const grouped = items.reduce((acc, item) => {
+          const site = item.siteName || 'Inconnu';
+          if (!acc[site]) acc[site] = [];
+          acc[site].push(item);
+          return acc;
+        }, {});
+
+        if (!searchQuery) return grouped;
+
+        const normalize = (str) => str ? String(str).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() : "";
+        const query = normalize(searchQuery);
+        const filtered = {};
+
+        Object.entries(grouped).forEach(([siteName, subMenus]) => {
+          const siteMatches = normalize(siteName).includes(query);
+          const safeSubMenus = Array.isArray(subMenus) ? subMenus : [];
+          
+          const matchingSubMenus = safeSubMenus.filter(sub => 
+            (sub && sub.subMenu && normalize(sub.subMenu).includes(query)) ||
+            (sub && sub.code && normalize(sub.code).includes(query))
+          );
+
+          if (siteMatches) {
+            filtered[siteName] = safeSubMenus;
+          } else if (matchingSubMenus.length > 0) {
+            filtered[siteName] = matchingSubMenus;
+          }
+        });
+        return filtered;
+      }, [items, searchQuery]);
+
+      const uniqueSites = useMemo(() => Object.keys(items.reduce((acc, item) => {
+        if (item.siteName) acc[item.siteName] = true;
+        return acc;
+      }, {})), [items]);
+
+      const showToast = (message) => {
+        setToastMessage(message);
+        setTimeout(() => setToastMessage(''), 3000);
+      };
+
+      const handleCopyCode = async (code) => {
+        try {
+          await navigator.clipboard.writeText(code);
+          showToast("Code copié dans le presse-papier !");
+          setSelectedCodeItem(null); 
+        } catch (err) {
+          showToast("Erreur lors de la copie.");
         }
-      } catch (error) {
-        console.error("Erreur d'import:", error);
-        showToast("Erreur lors de l'importation.");
-      } finally {
-         if (fileInputRef.current) fileInputRef.current.value = '';
-         setLoading(false);
+      };
+
+      const handleAddSubmit = async (e) => {
+        e.preventDefault();
+        if (!user || !formData.siteName || !formData.subMenu || !formData.code || !db) {
+          showToast("Veuillez remplir tous les champs.");
+          return;
+        }
+        setIsSubmitting(true);
+        try {
+          const collectionRef = collection(db, 'artifacts', appId, 'users', user.uid, 'access_codes');
+          await addDoc(collectionRef, {
+            siteName: formData.siteName.trim(),
+            subMenu: formData.subMenu.trim(),
+            code: formData.code.trim()
+          });
+          setIsAddModalOpen(false);
+          setFormData({ siteName: '', subMenu: '', code: '' });
+          showToast("Accès ajouté avec succès !");
+        } catch (error) {
+          console.error("Erreur d'ajout:", error);
+          showToast("Erreur lors de l'ajout.");
+        } finally {
+          setIsSubmitting(false);
+        }
+      };
+
+      const toggleSite = (siteName) => {
+        setExpandedSite(expandedSite === siteName ? null : siteName);
+      };
+
+      const confirmDelete = async () => {
+        if (!itemToDelete || !user || !db) return;
+        try {
+          if (itemToDelete.type === 'item') {
+            await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'access_codes', itemToDelete.id));
+            showToast("Accès supprimé.");
+          } else if (itemToDelete.type === 'site') {
+            const batch = writeBatch(db);
+            const itemsToDelete = items.filter(i => i.siteName === itemToDelete.siteName);
+            itemsToDelete.forEach(item => {
+              const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'access_codes', item.id);
+              batch.delete(docRef);
+            });
+            await batch.commit();
+            showToast("Site entier supprimé.");
+          }
+        } catch (error) {
+          console.error("Erreur de suppression:", error);
+          showToast("Erreur lors de la suppression.");
+        }
+        setItemToDelete(null);
+      };
+
+      const openEditModal = (type, data) => {
+        if (type === 'site') {
+          setEditModal({ isOpen: true, type, data, formData: { siteName: data.siteName, subMenu: '', code: '' } });
+        } else {
+          setEditModal({ isOpen: true, type, data, formData: { siteName: data.siteName, subMenu: data.subMenu, code: data.code } });
+        }
+      };
+
+      const handleEditSubmit = async (e) => {
+        e.preventDefault();
+        if (!user || !db) return;
+        setIsSubmitting(true);
+        try {
+          if (editModal.type === 'site') {
+            const newSiteName = editModal.formData.siteName.trim();
+            if (newSiteName && newSiteName !== editModal.data.siteName) {
+              const batch = writeBatch(db);
+              const itemsToUpdate = items.filter(i => i.siteName === editModal.data.siteName);
+              itemsToUpdate.forEach(item => {
+                const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'access_codes', item.id);
+                batch.update(docRef, { siteName: newSiteName });
+              });
+              await batch.commit();
+              showToast("Site modifié avec succès.");
+            }
+          } else if (editModal.type === 'item') {
+            const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'access_codes', editModal.data.id);
+            await updateDoc(docRef, {
+              siteName: editModal.formData.siteName.trim(),
+              subMenu: editModal.formData.subMenu.trim(),
+              code: editModal.formData.code.trim()
+            });
+            showToast("Accès modifié avec succès.");
+          }
+          setEditModal({ isOpen: false, type: null, data: null, formData: { siteName: '', subMenu: '', code: '' } });
+        } catch (error) {
+          console.error("Erreur de modification:", error);
+          showToast("Erreur lors de la modification.");
+        } finally {
+          setIsSubmitting(false);
+        }
+      };
+
+      const handleExport = () => {
+        const exportData = items.map(({ id, ...rest }) => rest);
+        const dataStr = JSON.stringify(exportData, null, 2);
+        const blob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'sauvegarde_acces.json';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        showToast("Sauvegarde exportée !");
+      };
+
+      const handleImport = async (e) => {
+        const file = e.target.files[0];
+        if (!file || !user || !db) return;
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          try {
+            const importedData = JSON.parse(event.target.result);
+            if (Array.isArray(importedData)) {
+              const validItems = importedData.filter(item => item.siteName && item.subMenu && item.code);
+              if (validItems.length > 0) {
+                setLoading(true);
+                const batch = writeBatch(db);
+                const collectionRef = collection(db, 'artifacts', appId, 'users', user.uid, 'access_codes');
+                validItems.forEach(item => {
+                  const newDocRef = doc(collectionRef);
+                  batch.set(newDocRef, { siteName: item.siteName, subMenu: item.subMenu, code: item.code });
+                });
+                await batch.commit();
+                showToast(`${validItems.length} accès importés !`);
+              } else {
+                showToast("Aucune donnée valide trouvée.");
+              }
+            } else {
+              showToast("Format de fichier invalide.");
+            }
+          } catch (error) {
+            console.error("Erreur d'import:", error);
+            showToast("Erreur lors de l'importation.");
+          } finally {
+             if (fileInputRef.current) fileInputRef.current.value = '';
+             setLoading(false);
+          }
+        };
+        reader.readAsText(file);
+      };
+
+      if (loading) {
+        return (
+          <div className="min-h-screen bg-[#07101E] flex flex-col items-center justify-center text-white space-y-4">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white"></div>
+            <p className="text-sm font-light tracking-wider">Chargement de vos accès...</p>
+          </div>
+        );
       }
-    };
-    reader.readAsText(file);
-  };
 
-  if (loading) {
-    return (
-      <div translate="no" className="notranslate min-h-screen bg-[#07101E] flex flex-col items-center justify-center text-white space-y-4">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white"></div>
-        <p className="text-sm font-light tracking-wider">Chargement de vos accès...</p>
-      </div>
-    );
-  }
-
-  return (
-    <div translate="no" className="notranslate min-h-screen bg-[#07101E] text-slate-800 font-sans selection:bg-blue-200">
-      <div className="max-w-md mx-auto bg-[#0A1628] min-h-screen relative shadow-2xl shadow-black/50 flex flex-col overflow-hidden">
-        
-        {/* Header - Totalement épuré */}
-        <header className="px-6 pt-10 pb-4 bg-[#0A1628] flex items-center justify-end z-10 sticky top-0 border-b border-white/5">
-          <div className="flex items-center space-x-2">
-            <input type="file" accept=".json" ref={fileInputRef} onChange={handleImport} className="hidden" />
-            <button onClick={() => fileInputRef.current?.click()} className="p-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-full transition-colors" title="Importer une sauvegarde">
-              <Upload className="h-5 w-5" />
-            </button>
-            <button onClick={handleExport} className="p-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-full transition-colors" title="Exporter les données">
-              <Download className="h-5 w-5" />
-            </button>
-          </div>
-        </header>
-
-        {/* Search Bar */}
-        <div className="px-6 pb-4 z-10 bg-[#0A1628]">
-          <div className="relative group">
-            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-              <Search className="h-5 w-5 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
-            </div>
-            <input
-              type="text"
-              placeholder="Rechercher ville, site, accès..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="block w-full pl-11 pr-4 py-4 bg-white/5 border-transparent rounded-2xl text-white placeholder-slate-400 focus:bg-white focus:text-slate-900 focus:ring-4 focus:ring-blue-500/30 transition-all duration-300 outline-none shadow-inner"
-            />
-            {searchQuery && (
-              <button 
-                onClick={() => setSearchQuery('')}
-                className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 hover:text-white"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Main Content / List */}
-        <main className="flex-1 px-4 pb-24 overflow-y-auto space-y-4 custom-scrollbar">
-          {Object.keys(filteredAndGroupedData).length === 0 ? (
-            <div className="text-center py-12 px-6">
-              <div className="bg-white/5 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Folder className="h-8 w-8 text-blue-400/50" />
+      return (
+        <div className="min-h-screen bg-[#07101E] text-slate-800 font-sans selection:bg-blue-200">
+          <div className="max-w-md mx-auto bg-[#0A1628] min-h-screen relative shadow-2xl shadow-black/50 flex flex-col overflow-hidden">
+            
+            <header className="px-6 pt-10 pb-4 bg-[#0A1628] flex items-center justify-end z-10 sticky top-0 border-b border-white/5">
+              <div className="flex items-center space-x-2">
+                <input type="file" accept=".json" ref={fileInputRef} onChange={handleImport} className="hidden" />
+                <button onClick={() => fileInputRef.current?.click()} className="p-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-full transition-colors" title="Importer une sauvegarde">
+                  <Upload className="h-5 w-5" />
+                </button>
+                <button onClick={handleExport} className="p-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-full transition-colors" title="Exporter les données">
+                  <Download className="h-5 w-5" />
+                </button>
               </div>
-              <p className="text-slate-300 font-medium text-lg">Aucun résultat trouvé</p>
-              <p className="text-slate-500 text-sm mt-2">Essayez un autre mot-clé ou ajoutez un nouvel accès.</p>
-            </div>
-          ) : (
-            Object.entries(filteredAndGroupedData).map(([siteName, subMenus], index) => {
-              const isExpanded = expandedSite === siteName || (searchQuery.length > 0 && subMenus.length > 0);
-              
-              return (
-                <div 
-                  key={siteName} 
-                  className={`bg-white rounded-2xl overflow-hidden transition-all duration-300 shadow-lg ${isExpanded ? 'ring-2 ring-blue-500/20 shadow-blue-900/20' : 'hover:shadow-xl'}`}
-                  style={{ animationDelay: `${index * 50}ms` }}
-                >
-                  {/* Site Header */}
-                  <div className="w-full px-2 sm:px-5 py-3 sm:py-5 flex items-center justify-between bg-white">
-                    <button 
-                      onClick={() => toggleSite(siteName)}
-                      className="flex-1 flex items-center space-x-3 sm:space-x-4 focus:outline-none text-left"
-                    >
-                      <div className="bg-blue-50 p-2 sm:p-2.5 rounded-xl text-blue-600">
-                        <MapPin className="h-5 w-5 sm:h-6 sm:w-6" />
-                      </div>
-                      <span className="text-base sm:text-lg font-semibold text-slate-800 truncate">{siteName}</span>
-                    </button>
-                    <div className="flex items-center space-x-1 sm:space-x-2">
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); openEditModal('site', { siteName }); }}
-                        className="p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-full transition-colors"
-                        title="Modifier ce site"
-                      >
-                        <Edit3 className="h-4 w-4 sm:h-5 sm:w-5" />
-                      </button>
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); setItemToDelete({ type: 'site', siteName }); }}
-                        className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
-                        title="Supprimer ce site"
-                      >
-                        <Trash2 className="h-4 w-4 sm:h-5 sm:w-5" />
-                      </button>
-                      <button 
-                        onClick={() => toggleSite(siteName)}
-                        className={`p-1.5 rounded-full transition-colors duration-300 ${isExpanded ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-400'}`}
-                      >
-                        <ChevronDown className={`h-5 w-5 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} />
-                      </button>
-                    </div>
-                  </div>
+            </header>
 
-                  {/* Sub-menus */}
-                  <div 
-                    className={`transition-all duration-300 ease-in-out bg-slate-50 border-t border-slate-100 ${isExpanded ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0'}`}
-                  >
-                    {subMenus.map((sub) => (
-                      <div
-                        key={sub.id}
-                        className="w-full flex items-center justify-between hover:bg-blue-50 focus-within:bg-blue-100 transition-colors border-b border-slate-200/50 last:border-0"
-                      >
-                        <button
-                          onClick={() => setSelectedCodeItem(sub)}
-                          className="flex-1 px-4 sm:px-6 py-4 flex items-center justify-between focus:outline-none text-left"
-                        >
-                          <span className="font-medium text-slate-700">{sub.subMenu}</span>
-                          <ChevronRight className="h-4 w-4 text-slate-400 mr-2" />
+            <div className="px-6 pb-4 z-10 bg-[#0A1628]">
+              <div className="relative group">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <Search className="h-5 w-5 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
+                </div>
+                <input
+                  type="text"
+                  placeholder="Rechercher ville, site, accès..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="block w-full pl-11 pr-4 py-4 bg-white/5 border-transparent rounded-2xl text-white placeholder-slate-400 focus:bg-white focus:text-slate-900 focus:ring-4 focus:ring-blue-500/30 transition-all duration-300 outline-none shadow-inner"
+                />
+                {searchQuery && (
+                  <button onClick={() => setSearchQuery('')} className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 hover:text-white">
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <main className="flex-1 px-4 pb-24 overflow-y-auto space-y-4 custom-scrollbar">
+              {Object.keys(filteredAndGroupedData).length === 0 ? (
+                <div className="text-center py-12 px-6">
+                  <div className="bg-white/5 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Folder className="h-8 w-8 text-blue-400/50" />
+                  </div>
+                  <p className="text-slate-300 font-medium text-lg">Aucun résultat trouvé</p>
+                  <p className="text-slate-500 text-sm mt-2">Essayez un autre mot-clé ou ajoutez un nouvel accès.</p>
+                </div>
+              ) : (
+                Object.entries(filteredAndGroupedData).map(([siteName, subMenus], index) => {
+                  const isExpanded = expandedSite === siteName || (searchQuery.length > 0 && subMenus.length > 0);
+                  return (
+                    <div key={siteName} className={`bg-white rounded-2xl overflow-hidden transition-all duration-300 shadow-lg ${isExpanded ? 'ring-2 ring-blue-500/20 shadow-blue-900/20' : 'hover:shadow-xl'}`} style={{ animationDelay: `${index * 50}ms` }}>
+                      <div className="w-full px-2 sm:px-5 py-3 sm:py-5 flex items-center justify-between bg-white">
+                        <button onClick={() => toggleSite(siteName)} className="flex-1 flex items-center space-x-3 sm:space-x-4 focus:outline-none text-left">
+                          <div className="bg-blue-50 p-2 sm:p-2.5 rounded-xl text-blue-600">
+                            <MapPin className="h-5 w-5 sm:h-6 sm:w-6" />
+                          </div>
+                          <span className="text-base sm:text-lg font-semibold text-slate-800 truncate">{siteName}</span>
                         </button>
-                        <div className="flex items-center pr-2">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); openEditModal('item', sub); }}
-                            className="p-3 text-slate-300 hover:text-blue-500 transition-colors"
-                            title="Modifier ce code"
-                          >
+                        <div className="flex items-center space-x-1 sm:space-x-2">
+                          <button onClick={(e) => { e.stopPropagation(); openEditModal('site', { siteName }); }} className="p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-full transition-colors" title="Modifier ce site">
                             <Edit3 className="h-4 w-4 sm:h-5 sm:w-5" />
                           </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setItemToDelete({ type: 'item', id: sub.id, subMenu: sub.subMenu }); }}
-                            className="p-3 text-slate-300 hover:text-red-500 transition-colors"
-                            title="Supprimer ce code"
-                          >
+                          <button onClick={(e) => { e.stopPropagation(); setItemToDelete({ type: 'site', siteName }); }} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors" title="Supprimer ce site">
                             <Trash2 className="h-4 w-4 sm:h-5 sm:w-5" />
+                          </button>
+                          <button onClick={() => toggleSite(siteName)} className={`p-1.5 rounded-full transition-colors duration-300 ${isExpanded ? 'bg-blue-50 text-blue-600' : 'bg-slate-50 text-slate-400'}`}>
+                            <ChevronDown className={`h-5 w-5 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} />
                           </button>
                         </div>
                       </div>
-                    ))}
+                      <div className={`transition-all duration-300 ease-in-out bg-slate-50 border-t border-slate-100 ${isExpanded ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                        {subMenus.map((sub) => (
+                          <div key={sub.id} className="w-full flex items-center justify-between hover:bg-blue-50 focus-within:bg-blue-100 transition-colors border-b border-slate-200/50 last:border-0">
+                            <button onClick={() => setSelectedCodeItem(sub)} className="flex-1 px-4 sm:px-6 py-4 flex items-center justify-between focus:outline-none text-left">
+                              <span className="font-medium text-slate-700">{sub.subMenu}</span>
+                              <ChevronRight className="h-4 w-4 text-slate-400 mr-2" />
+                            </button>
+                            <div className="flex items-center pr-2">
+                              <button onClick={(e) => { e.stopPropagation(); openEditModal('item', sub); }} className="p-3 text-slate-300 hover:text-blue-500 transition-colors" title="Modifier ce code">
+                                <Edit3 className="h-4 w-4 sm:h-5 sm:w-5" />
+                              </button>
+                              <button onClick={(e) => { e.stopPropagation(); setItemToDelete({ type: 'item', id: sub.id, subMenu: sub.subMenu }); }} className="p-3 text-slate-300 hover:text-red-500 transition-colors" title="Supprimer ce code">
+                                <Trash2 className="h-4 w-4 sm:h-5 sm:w-5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </main>
+
+            <button onClick={() => setIsAddModalOpen(true)} className="absolute bottom-6 right-6 h-14 w-14 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-500/40 flex items-center justify-center hover:bg-blue-500 active:scale-95 transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-blue-500/30 z-20">
+              <Plus className="h-7 w-7" />
+            </button>
+
+            {selectedCodeItem && (
+              <div className="absolute inset-0 z-50 flex items-end sm:items-center justify-center">
+                <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={() => setSelectedCodeItem(null)}></div>
+                <div className="bg-white w-full sm:w-[90%] rounded-t-3xl sm:rounded-3xl p-6 sm:p-8 relative z-10 shadow-2xl animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 sm:fade-in duration-300">
+                  <button onClick={() => setSelectedCodeItem(null)} className="absolute top-4 right-4 p-2 bg-slate-100 text-slate-500 rounded-full hover:bg-slate-200 transition-colors">
+                    <X className="h-5 w-5" />
+                  </button>
+                  <div className="text-center mb-8 mt-4">
+                    <div className="bg-blue-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600">
+                      <LockKeyhole className="h-8 w-8" />
+                    </div>
+                    <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-1">{selectedCodeItem.siteName}</h3>
+                    <h2 className="text-2xl font-bold text-slate-800">{selectedCodeItem.subMenu}</h2>
                   </div>
+                  <div className="bg-slate-50 border-2 border-slate-100 rounded-2xl p-6 text-center mb-6">
+                    <p className="text-5xl font-black text-slate-800 tracking-widest">{selectedCodeItem.code}</p>
+                  </div>
+                  <button onClick={() => handleCopyCode(selectedCodeItem.code)} className="w-full py-4 bg-slate-900 text-white rounded-xl font-semibold text-lg flex items-center justify-center space-x-2 hover:bg-slate-800 active:scale-[0.98] transition-all shadow-lg">
+                    <Copy className="h-5 w-5" />
+                    <span>Copier le code</span>
+                  </button>
                 </div>
-              );
-            })
-          )}
-        </main>
-
-        {/* FAB (Floating Action Button) */}
-        <button
-          onClick={() => setIsAddModalOpen(true)}
-          className="absolute bottom-6 right-6 h-14 w-14 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-500/40 flex items-center justify-center hover:bg-blue-500 active:scale-95 transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-blue-500/30 z-20"
-        >
-          <Plus className="h-7 w-7" />
-        </button>
-
-        {/* Code View Modal */}
-        {selectedCodeItem && (
-          <div className="absolute inset-0 z-50 flex items-end sm:items-center justify-center">
-            <div 
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
-              onClick={() => setSelectedCodeItem(null)}
-            ></div>
-            <div className="bg-white w-full sm:w-[90%] rounded-t-3xl sm:rounded-3xl p-6 sm:p-8 relative z-10 shadow-2xl animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 sm:fade-in duration-300">
-              <button 
-                onClick={() => setSelectedCodeItem(null)}
-                className="absolute top-4 right-4 p-2 bg-slate-100 text-slate-500 rounded-full hover:bg-slate-200 transition-colors"
-              >
-                <X className="h-5 w-5" />
-              </button>
-              
-              <div className="text-center mb-8 mt-4">
-                <div className="bg-blue-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600">
-                  <LockKeyhole className="h-8 w-8" />
-                </div>
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-1">{selectedCodeItem.siteName}</h3>
-                <h2 className="text-2xl font-bold text-slate-800">{selectedCodeItem.subMenu}</h2>
               </div>
-              
-              <div className="bg-slate-50 border-2 border-slate-100 rounded-2xl p-6 text-center mb-6">
-                <p className="text-5xl font-black text-slate-800 tracking-widest">{selectedCodeItem.code}</p>
-              </div>
+            )}
 
-              <button
-                onClick={() => handleCopyCode(selectedCodeItem.code)}
-                className="w-full py-4 bg-slate-900 text-white rounded-xl font-semibold text-lg flex items-center justify-center space-x-2 hover:bg-slate-800 active:scale-[0.98] transition-all shadow-lg"
-              >
-                <Copy className="h-5 w-5" />
-                <span>Copier le code</span>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Add New Entry Modal */}
-        {isAddModalOpen && (
-          <div className="absolute inset-0 z-50 flex flex-col justify-end sm:justify-center p-0 sm:p-6">
-            <div 
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-              onClick={() => setIsAddModalOpen(false)}
-            ></div>
-            <div className="bg-white w-full h-[85vh] sm:h-auto rounded-t-3xl sm:rounded-3xl relative z-10 shadow-2xl flex flex-col animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 duration-300">
-              
-              <div className="flex items-center justify-between p-6 border-b border-slate-100">
-                <h2 className="text-xl font-bold text-slate-800 flex items-center">
-                  <Plus className="h-5 w-5 mr-2 text-blue-600" /> Ajouter un accès
-                </h2>
-                <button onClick={() => setIsAddModalOpen(false)} className="p-2 bg-slate-100 rounded-full text-slate-500">
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              <div className="p-6 flex-1 overflow-y-auto">
-                <form id="add-form" onSubmit={handleAddSubmit} className="space-y-6">
-                  <div className="space-y-2">
-                    <label className="text-sm font-semibold text-slate-700 ml-1">Ville ou Site</label>
-                    <input
-                      list="sites-list"
-                      required
-                      placeholder="Ex: Beaupreau"
-                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                      value={formData.siteName}
-                      onChange={(e) => setFormData({...formData, siteName: e.target.value})}
-                    />
-                    <datalist id="sites-list">
-                      {uniqueSites.map(site => <option key={site} value={site} />)}
-                    </datalist>
+            {isAddModalOpen && (
+              <div className="absolute inset-0 z-50 flex flex-col justify-end sm:justify-center p-0 sm:p-6">
+                <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsAddModalOpen(false)}></div>
+                <div className="bg-white w-full h-[85vh] sm:h-auto rounded-t-3xl sm:rounded-3xl relative z-10 shadow-2xl flex flex-col animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 duration-300">
+                  <div className="flex items-center justify-between p-6 border-b border-slate-100">
+                    <h2 className="text-xl font-bold text-slate-800 flex items-center">
+                      <Plus className="h-5 w-5 mr-2 text-blue-600" /> Ajouter un accès
+                    </h2>
+                    <button onClick={() => setIsAddModalOpen(false)} className="p-2 bg-slate-100 rounded-full text-slate-500">
+                      <X className="h-5 w-5" />
+                    </button>
                   </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-semibold text-slate-700 ml-1">Nom de l'accès / Sous-menu</label>
-                    <input
-                      required
-                      placeholder="Ex: Local Biomasse"
-                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                      value={formData.subMenu}
-                      onChange={(e) => setFormData({...formData, subMenu: e.target.value})}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-semibold text-slate-700 ml-1">Code d'accès</label>
-                    <input
-                      required
-                      placeholder="Ex: 1234, 4321A..."
-                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all font-mono text-lg"
-                      value={formData.code}
-                      onChange={(e) => setFormData({...formData, code: e.target.value})}
-                    />
-                  </div>
-                </form>
-              </div>
-              
-              <div className="p-6 border-t border-slate-100 bg-slate-50/50 rounded-b-3xl">
-                <button
-                  type="submit"
-                  form="add-form"
-                  disabled={isSubmitting}
-                  className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold text-lg hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-70 flex justify-center items-center shadow-lg shadow-blue-500/30"
-                >
-                  {isSubmitting ? (
-                    <span className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></span>
-                  ) : (
-                    "Enregistrer l'accès"
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Edit Modal */}
-        {editModal.isOpen && (
-          <div className="absolute inset-0 z-50 flex flex-col justify-end sm:justify-center p-0 sm:p-6">
-            <div 
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-              onClick={() => setEditModal({ ...editModal, isOpen: false })}
-            ></div>
-            <div className="bg-white w-full h-[85vh] sm:h-auto rounded-t-3xl sm:rounded-3xl relative z-10 shadow-2xl flex flex-col animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 duration-300">
-              
-              <div className="flex items-center justify-between p-6 border-b border-slate-100">
-                <h2 className="text-xl font-bold text-slate-800 flex items-center">
-                  <Edit3 className="h-5 w-5 mr-2 text-blue-600" /> 
-                  {editModal.type === 'site' ? "Modifier le site" : "Modifier l'accès"}
-                </h2>
-                <button onClick={() => setEditModal({ ...editModal, isOpen: false })} className="p-2 bg-slate-100 rounded-full text-slate-500">
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              <div className="p-6 flex-1 overflow-y-auto">
-                <form id="edit-form" onSubmit={handleEditSubmit} className="space-y-6">
-                  
-                  <div className="space-y-2">
-                    <label className="text-sm font-semibold text-slate-700 ml-1">Ville ou Site</label>
-                    <input
-                      list="sites-list-edit"
-                      required
-                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                      value={editModal.formData.siteName}
-                      onChange={(e) => setEditModal({ ...editModal, formData: { ...editModal.formData, siteName: e.target.value } })}
-                    />
-                    <datalist id="sites-list-edit">
-                      {uniqueSites.map(site => <option key={site} value={site} />)}
-                    </datalist>
-                    {editModal.type === 'site' && (
-                      <p className="text-xs text-slate-500 mt-1 ml-1">
-                        Modifier ce nom mettra à jour tous les accès associés à ce site.
-                      </p>
-                    )}
-                  </div>
-
-                  {editModal.type === 'item' && (
-                    <>
+                  <div className="p-6 flex-1 overflow-y-auto">
+                    <form id="add-form" onSubmit={handleAddSubmit} className="space-y-6">
+                      <div className="space-y-2">
+                        <label className="text-sm font-semibold text-slate-700 ml-1">Ville ou Site</label>
+                        <input list="sites-list" required placeholder="Ex: Beaupreau" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" value={formData.siteName} onChange={(e) => setFormData({...formData, siteName: e.target.value})} />
+                        <datalist id="sites-list">{uniqueSites.map(site => <option key={site} value={site} />)}</datalist>
+                      </div>
                       <div className="space-y-2">
                         <label className="text-sm font-semibold text-slate-700 ml-1">Nom de l'accès / Sous-menu</label>
-                        <input
-                          required
-                          className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                          value={editModal.formData.subMenu}
-                          onChange={(e) => setEditModal({ ...editModal, formData: { ...editModal.formData, subMenu: e.target.value } })}
-                        />
+                        <input required placeholder="Ex: Local Biomasse" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" value={formData.subMenu} onChange={(e) => setFormData({...formData, subMenu: e.target.value})} />
                       </div>
-
                       <div className="space-y-2">
                         <label className="text-sm font-semibold text-slate-700 ml-1">Code d'accès</label>
-                        <input
-                          required
-                          className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all font-mono text-lg"
-                          value={editModal.formData.code}
-                          onChange={(e) => setEditModal({ ...editModal, formData: { ...editModal.formData, code: e.target.value } })}
-                        />
+                        <input required placeholder="Ex: 1234, 4321A..." className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all font-mono text-lg" value={formData.code} onChange={(e) => setFormData({...formData, code: e.target.value})} />
                       </div>
-                    </>
-                  )}
-                </form>
+                    </form>
+                  </div>
+                  <div className="p-6 border-t border-slate-100 bg-slate-50/50 rounded-b-3xl">
+                    <button type="submit" form="add-form" disabled={isSubmitting} className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold text-lg hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-70 flex justify-center items-center shadow-lg shadow-blue-500/30">
+                      {isSubmitting ? <span className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></span> : "Enregistrer l'accès"}
+                    </button>
+                  </div>
+                </div>
               </div>
-              
-              <div className="p-6 border-t border-slate-100 bg-slate-50/50 rounded-b-3xl">
-                <button
-                  type="submit"
-                  form="edit-form"
-                  disabled={isSubmitting}
-                  className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold text-lg hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-70 flex justify-center items-center shadow-lg shadow-blue-500/30"
-                >
-                  {isSubmitting ? (
-                    <span className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></span>
-                  ) : (
-                    "Sauvegarder"
-                  )}
-                </button>
-              </div>
+            )}
 
-            </div>
+            {editModal.isOpen && (
+              <div className="absolute inset-0 z-50 flex flex-col justify-end sm:justify-center p-0 sm:p-6">
+                <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setEditModal({ ...editModal, isOpen: false })}></div>
+                <div className="bg-white w-full h-[85vh] sm:h-auto rounded-t-3xl sm:rounded-3xl relative z-10 shadow-2xl flex flex-col animate-in slide-in-from-bottom-full sm:slide-in-from-bottom-0 duration-300">
+                  <div className="flex items-center justify-between p-6 border-b border-slate-100">
+                    <h2 className="text-xl font-bold text-slate-800 flex items-center">
+                      <Edit3 className="h-5 w-5 mr-2 text-blue-600" /> {editModal.type === 'site' ? "Modifier le site" : "Modifier l'accès"}
+                    </h2>
+                    <button onClick={() => setEditModal({ ...editModal, isOpen: false })} className="p-2 bg-slate-100 rounded-full text-slate-500">
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+                  <div className="p-6 flex-1 overflow-y-auto">
+                    <form id="edit-form" onSubmit={handleEditSubmit} className="space-y-6">
+                      <div className="space-y-2">
+                        <label className="text-sm font-semibold text-slate-700 ml-1">Ville ou Site</label>
+                        <input list="sites-list-edit" required className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" value={editModal.formData.siteName} onChange={(e) => setEditModal({ ...editModal, formData: { ...editModal.formData, siteName: e.target.value } })} />
+                        <datalist id="sites-list-edit">{uniqueSites.map(site => <option key={site} value={site} />)}</datalist>
+                        {editModal.type === 'site' && <p className="text-xs text-slate-500 mt-1 ml-1">Modifier ce nom mettra à jour tous les accès associés à ce site.</p>}
+                      </div>
+                      {editModal.type === 'item' && (
+                        <>
+                          <div className="space-y-2">
+                            <label className="text-sm font-semibold text-slate-700 ml-1">Nom de l'accès / Sous-menu</label>
+                            <input required className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" value={editModal.formData.subMenu} onChange={(e) => setEditModal({ ...editModal, formData: { ...editModal.formData, subMenu: e.target.value } })} />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-semibold text-slate-700 ml-1">Code d'accès</label>
+                            <input required className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all font-mono text-lg" value={editModal.formData.code} onChange={(e) => setEditModal({ ...editModal, formData: { ...editModal.formData, code: e.target.value } })} />
+                          </div>
+                        </>
+                      )}
+                    </form>
+                  </div>
+                  <div className="p-6 border-t border-slate-100 bg-slate-50/50 rounded-b-3xl">
+                    <button type="submit" form="edit-form" disabled={isSubmitting} className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold text-lg hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-70 flex justify-center items-center shadow-lg shadow-blue-500/30">
+                      {isSubmitting ? <span className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></span> : "Sauvegarder"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {itemToDelete && (
+              <div className="absolute inset-0 z-[60] flex items-center justify-center p-4">
+                <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={() => setItemToDelete(null)}></div>
+                <div className="bg-white w-full max-w-sm rounded-3xl p-6 relative z-10 shadow-2xl animate-in zoom-in-95 duration-200">
+                  <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4 text-red-600">
+                    <AlertTriangle className="h-6 w-6" />
+                  </div>
+                  <h3 className="text-xl font-bold text-center text-slate-800 mb-2">Confirmer la suppression</h3>
+                  <p className="text-center text-slate-500 mb-6 text-sm sm:text-base">
+                    Êtes-vous sûr de vouloir supprimer {itemToDelete.type === 'site' ? <strong>tout le site "{itemToDelete.siteName}"</strong> : <strong>l'accès "{itemToDelete.subMenu}"</strong>} ? Cette action est irréversible.
+                  </p>
+                  <div className="flex space-x-3">
+                    <button onClick={() => setItemToDelete(null)} className="flex-1 py-3 bg-slate-100 text-slate-700 font-semibold rounded-xl hover:bg-slate-200 transition-colors">Annuler</button>
+                    <button onClick={confirmDelete} className="flex-1 py-3 bg-red-600 text-white font-semibold rounded-xl hover:bg-red-700 transition-colors">Supprimer</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {toastMessage && (
+              <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4 duration-300">
+                <div className="bg-slate-900 text-white px-6 py-3 rounded-full shadow-2xl flex items-center space-x-2 font-medium whitespace-nowrap">
+                  <CheckCircle2 className="h-5 w-5 text-green-400" />
+                  <span>{toastMessage}</span>
+                </div>
+              </div>
+            )}
           </div>
-        )}
+        </div>
+      );
+    }
 
-        {/* Delete Confirmation Modal */}
-        {itemToDelete && (
-          <div className="absolute inset-0 z-[60] flex items-center justify-center p-4">
-            <div 
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
-              onClick={() => setItemToDelete(null)}
-            ></div>
-            <div className="bg-white w-full max-w-sm rounded-3xl p-6 relative z-10 shadow-2xl animate-in zoom-in-95 duration-200">
-              <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4 text-red-600">
-                <AlertTriangle className="h-6 w-6" />
-              </div>
-              <h3 className="text-xl font-bold text-center text-slate-800 mb-2">Confirmer la suppression</h3>
-              <p className="text-center text-slate-500 mb-6 text-sm sm:text-base">
-                Êtes-vous sûr de vouloir supprimer {itemToDelete.type === 'site' ? <strong>tout le site "{itemToDelete.siteName}"</strong> : <strong>l'accès "{itemToDelete.subMenu}"</strong>} ? Cette action est irréversible.
-              </p>
-              <div className="flex space-x-3">
-                <button 
-                  onClick={() => setItemToDelete(null)}
-                  className="flex-1 py-3 bg-slate-100 text-slate-700 font-semibold rounded-xl hover:bg-slate-200 transition-colors"
-                >
-                  Annuler
-                </button>
-                <button 
-                  onClick={confirmDelete}
-                  className="flex-1 py-3 bg-red-600 text-white font-semibold rounded-xl hover:bg-red-700 transition-colors"
-                >
-                  Supprimer
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Global Toast Notification */}
-        {toastMessage && (
-          <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-4 duration-300">
-            <div className="bg-slate-900 text-white px-6 py-3 rounded-full shadow-2xl flex items-center space-x-2 font-medium whitespace-nowrap">
-              <CheckCircle2 className="h-5 w-5 text-green-400" />
-              <span>{toastMessage}</span>
-            </div>
-          </div>
-        )}
-
-      </div>
-    </div>
-  );
-}
+    const root = createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
