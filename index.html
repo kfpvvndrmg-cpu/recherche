@@ -2,7 +2,12 @@
 <html lang="fr" translate="no">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#07101E">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="apple-touch-icon" href="./ai-generated-8783105_640.jpg">
   <title>PassKeeper</title>
   <link rel="icon" href="./ai-generated-8783105_640.jpg">
   
@@ -318,7 +323,7 @@
       if (loading) {
         return (
           <div className="min-h-screen flex flex-col items-center justify-center text-white space-y-4 relative" style={{ backgroundImage: "url('./ai-generated-8783105_640.jpg')", backgroundSize: 'cover', backgroundPosition: 'center' }}>
-            <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm"></div>
+            <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm"></div>
             <div className="z-10 flex flex-col items-center">
               <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-400 mb-4"></div>
               <p className="text-sm font-medium tracking-wider text-slate-200">Chargement de vos accès...</p>
@@ -329,10 +334,10 @@
 
       return (
         <div className="min-h-screen text-slate-800 font-sans selection:bg-blue-200 relative" style={{ backgroundImage: "url('./ai-generated-8783105_640.jpg')", backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed' }}>
-          {/* Calque assombrissant allégé pour mieux voir le fond */}
-          <div className="absolute inset-0 bg-slate-900/30"></div>
+          {/* Calque assombrissant très allégé pour bien voir le fond */}
+          <div className="absolute inset-0 bg-slate-900/10"></div>
           
-          <div className="max-w-md mx-auto bg-slate-900/40 backdrop-blur-md min-h-screen relative shadow-2xl shadow-black/50 flex flex-col overflow-hidden border-x border-white/5">
+          <div className="max-w-md mx-auto bg-slate-900/20 backdrop-blur-md min-h-screen relative shadow-2xl shadow-black/50 flex flex-col overflow-hidden border-x border-white/5">
             
             <header className="px-6 pt-10 pb-4 bg-transparent flex items-center justify-between z-10 sticky top-0 border-b border-white/10">
               <div className="flex items-center space-x-3">
