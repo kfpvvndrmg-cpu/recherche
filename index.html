@@ -48,7 +48,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect, useMemo, useRef } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Search, Plus, X, Copy, ChevronDown, ChevronRight, MapPin, CheckCircle2, LockKeyhole, Folder, Trash2, AlertTriangle, Edit3, Download, Upload } from 'lucide-react';
+    import { Search, Plus, X, Copy, ChevronDown, ChevronRight, MapPin, CheckCircle2, LockKeyhole, Folder, Trash2, AlertTriangle, Edit3, Download, Upload, User, KeyRound } from 'lucide-react';
 
     import { initializeApp } from 'firebase/app';
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
@@ -82,10 +82,10 @@
       const [toastMessage, setToastMessage] = useState('');
       const [selectedCodeItem, setSelectedCodeItem] = useState(null);
       const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-      const [formData, setFormData] = useState({ siteName: '', subMenu: '', code: '' });
+      const [formData, setFormData] = useState({ siteName: '', subMenu: '', code: '', username: '', password: '' });
       const [isSubmitting, setIsSubmitting] = useState(false);
       const [itemToDelete, setItemToDelete] = useState(null);
-      const [editModal, setEditModal] = useState({ isOpen: false, type: null, data: null, formData: { siteName: '', subMenu: '', code: '' } });
+      const [editModal, setEditModal] = useState({ isOpen: false, type: null, data: null, formData: { siteName: '', subMenu: '', code: '', username: '', password: '' } });
       
       const fileInputRef = useRef(null);
 
@@ -177,7 +177,8 @@
           
           const matchingSubMenus = safeSubMenus.filter(sub => 
             (sub && sub.subMenu && normalize(sub.subMenu).includes(query)) ||
-            (sub && sub.code && normalize(sub.code).includes(query))
+            (sub && sub.code && normalize(sub.code).includes(query)) ||
+            (sub && sub.username && normalize(sub.username).includes(query))
           );
 
           if (siteMatches) {
@@ -201,20 +202,20 @@
         setTimeout(() => setToastMessage(''), 3000);
       };
 
-      const handleCopyCode = async (code) => {
+      const handleCopyValue = async (value, label = "Texte") => {
+        if (!value) return;
         try {
           if (navigator.clipboard && window.isSecureContext) {
-            await navigator.clipboard.writeText(code);
+            await navigator.clipboard.writeText(value);
           } else {
             const textArea = document.createElement("textarea");
-            textArea.value = code;
+            textArea.value = value;
             document.body.appendChild(textArea);
             textArea.select();
             document.execCommand('copy');
             document.body.removeChild(textArea);
           }
-          showToast("Code copié dans le presse-papier !");
-          setSelectedCodeItem(null); 
+          showToast(`${label} copié dans le presse-papier !`);
         } catch (err) {
           showToast("Erreur lors de la copie.");
         }
@@ -222,15 +223,17 @@
 
       const handleAddSubmit = async (e) => {
         e.preventDefault();
-        if (!formData.siteName.trim() || !formData.subMenu.trim() || !formData.code.trim()) {
-          showToast("Veuillez remplir tous les champs.");
+        if (!formData.siteName.trim() || !formData.subMenu.trim()) {
+          showToast("Veuillez indiquer au moins la ville/site et le nom de l'accès.");
           return;
         }
         setIsSubmitting(true);
         const newEntry = {
           siteName: formData.siteName.trim(),
           subMenu: formData.subMenu.trim(),
-          code: formData.code.trim()
+          code: formData.code ? formData.code.trim() : '',
+          username: formData.username ? formData.username.trim() : '',
+          password: formData.password ? formData.password.trim() : ''
         };
 
         try {
@@ -243,7 +246,7 @@
             saveToLocal([...items, newItemWithId]);
           }
           setIsAddModalOpen(false);
-          setFormData({ siteName: '', subMenu: '', code: '' });
+          setFormData({ siteName: '', subMenu: '', code: '', username: '', password: '' });
           showToast("Accès ajouté avec succès !");
         } catch (error) {
           console.error("Erreur d'ajout:", error);
@@ -293,9 +296,20 @@
 
       const openEditModal = (type, data) => {
         if (type === 'site') {
-          setEditModal({ isOpen: true, type, data, formData: { siteName: data.siteName, subMenu: '', code: '' } });
+          setEditModal({ isOpen: true, type, data, formData: { siteName: data.siteName, subMenu: '', code: '', username: '', password: '' } });
         } else {
-          setEditModal({ isOpen: true, type, data, formData: { siteName: data.siteName, subMenu: data.subMenu, code: data.code } });
+          setEditModal({ 
+            isOpen: true, 
+            type, 
+            data, 
+            formData: { 
+              siteName: data.siteName || '', 
+              subMenu: data.subMenu || '', 
+              code: data.code || '',
+              username: data.username || '',
+              password: data.password || ''
+            } 
+          });
         }
       };
 
@@ -317,11 +331,18 @@
                 showToast("Site modifié avec succès.");
               }
             } else if (editModal.type === 'item') {
+              if (!editModal.formData.siteName.trim() || !editModal.formData.subMenu.trim()) {
+                showToast("Le site et le nom de l'accès sont obligatoires.");
+                setIsSubmitting(false);
+                return;
+              }
               const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'access_codes', editModal.data.id);
               await updateDoc(docRef, {
                 siteName: editModal.formData.siteName.trim(),
                 subMenu: editModal.formData.subMenu.trim(),
-                code: editModal.formData.code.trim()
+                code: editModal.formData.code ? editModal.formData.code.trim() : '',
+                username: editModal.formData.username ? editModal.formData.username.trim() : '',
+                password: editModal.formData.password ? editModal.formData.password.trim() : ''
               });
               showToast("Accès modifié avec succès.");
             }
@@ -335,17 +356,24 @@
                 showToast("Site modifié avec succès.");
               }
             } else if (editModal.type === 'item') {
+              if (!editModal.formData.siteName.trim() || !editModal.formData.subMenu.trim()) {
+                showToast("Le site et le nom de l'accès sont obligatoires.");
+                setIsSubmitting(false);
+                return;
+              }
               const updated = items.map(i => i.id === editModal.data.id ? {
                 ...i,
                 siteName: editModal.formData.siteName.trim(),
                 subMenu: editModal.formData.subMenu.trim(),
-                code: editModal.formData.code.trim()
+                code: editModal.formData.code ? editModal.formData.code.trim() : '',
+                username: editModal.formData.username ? editModal.formData.username.trim() : '',
+                password: editModal.formData.password ? editModal.formData.password.trim() : ''
               } : i);
               saveToLocal(updated);
               showToast("Accès modifié avec succès.");
             }
           }
-          setEditModal({ isOpen: false, type: null, data: null, formData: { siteName: '', subMenu: '', code: '' } });
+          setEditModal({ isOpen: false, type: null, data: null, formData: { siteName: '', subMenu: '', code: '', username: '', password: '' } });
         } catch (error) {
           console.error("Erreur de modification:", error);
           showToast("Erreur lors de la modification.");
@@ -377,7 +405,7 @@
           try {
             const importedData = JSON.parse(event.target.result);
             if (Array.isArray(importedData)) {
-              const validItems = importedData.filter(item => item.siteName && item.subMenu && item.code);
+              const validItems = importedData.filter(item => item.siteName && item.subMenu);
               if (validItems.length > 0) {
                 if (isFirebaseEnabled && user && db) {
                   setLoading(true);
@@ -385,7 +413,13 @@
                   const collectionRef = collection(db, 'artifacts', appId, 'users', user.uid, 'access_codes');
                   validItems.forEach(item => {
                     const newDocRef = doc(collectionRef);
-                    batch.set(newDocRef, { siteName: item.siteName, subMenu: item.subMenu, code: item.code });
+                    batch.set(newDocRef, { 
+                      siteName: item.siteName, 
+                      subMenu: item.subMenu, 
+                      code: item.code || '',
+                      username: item.username || '',
+                      password: item.password || ''
+                    });
                   });
                   await batch.commit();
                 } else {
@@ -394,7 +428,9 @@
                     id: (Date.now() + idx).toString(),
                     siteName: item.siteName,
                     subMenu: item.subMenu,
-                    code: item.code
+                    code: item.code || '',
+                    username: item.username || '',
+                    password: item.password || ''
                   }));
                   saveToLocal([...items, ...newItemsWithIds]);
                 }
@@ -501,18 +537,18 @@
                         className={`bg-white/95 backdrop-blur-md rounded-2xl overflow-hidden transition-all duration-300 shadow-lg ${isExpanded ? 'ring-2 ring-blue-500/40 shadow-blue-900/30' : 'hover:shadow-xl'}`}
                         style={{ animationDelay: `${index * 50}ms` }}
                       >
-                        {/* En-tête du site */}
-                        <div className="w-full px-3 sm:px-5 py-3.5 sm:py-4 flex items-center justify-between bg-white">
+                        {/* En-tête du Site */}
+                        <div className="w-full px-3 sm:px-5 py-3.5 sm:py-4 flex items-center justify-between">
                           <button 
                             onClick={() => toggleSite(siteName)}
                             className="flex-1 flex items-center space-x-3 sm:space-x-4 focus:outline-none text-left min-w-0"
                           >
-                            <div className="bg-blue-50 p-2.5 rounded-xl text-blue-600 shrink-0">
+                            <div className="bg-blue-50 p-2 sm:p-2.5 rounded-xl text-blue-600 shrink-0">
                               <MapPin className="h-5 w-5 sm:h-6 sm:w-6" />
                             </div>
                             <span className="text-base sm:text-lg font-semibold text-slate-800 truncate">{siteName}</span>
                           </button>
-                          <div className="flex items-center space-x-1 sm:space-x-1.5 shrink-0">
+                          <div className="flex items-center space-x-1 sm:space-x-2 shrink-0">
                             <button 
                               onClick={(e) => { e.stopPropagation(); openEditModal('site', { siteName }); }}
                               className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
@@ -529,7 +565,7 @@
                             </button>
                             <button 
                               onClick={() => toggleSite(siteName)}
-                              className={`p-1.5 rounded-full transition-colors duration-300 ${isExpanded ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'}`}
+                              className={`p-1.5 rounded-full transition-colors duration-300 ${isExpanded ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'}`}
                             >
                               <ChevronDown className={`h-5 w-5 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} />
                             </button>
@@ -538,12 +574,12 @@
 
                         {/* Sous-menus */}
                         <div 
-                          className={`transition-all duration-300 ease-in-out bg-slate-50/90 border-t border-slate-100 ${isExpanded ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0 overflow-hidden'}`}
+                          className={`transition-all duration-300 ease-in-out bg-slate-50/95 border-t border-slate-100 ${isExpanded ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0 overflow-hidden'}`}
                         >
                           {subMenus.map((sub) => (
                             <div
                               key={sub.id}
-                              className="w-full flex items-center justify-between hover:bg-blue-50/80 focus-within:bg-blue-100 transition-colors border-b border-slate-200/60 last:border-0"
+                              className="w-full flex items-center justify-between hover:bg-blue-50/80 transition-colors border-b border-slate-200/50 last:border-0"
                             >
                               <button
                                 onClick={() => setSelectedCodeItem(sub)}
@@ -556,14 +592,14 @@
                                 <button
                                   onClick={(e) => { e.stopPropagation(); openEditModal('item', sub); }}
                                   className="p-2.5 text-slate-400 hover:text-blue-600 transition-colors"
-                                  title="Modifier ce code"
+                                  title="Modifier cet accès"
                                 >
                                   <Edit3 className="h-4 w-4 sm:h-5 sm:w-5" />
                                 </button>
                                 <button
                                   onClick={(e) => { e.stopPropagation(); setItemToDelete({ type: 'item', id: sub.id, subMenu: sub.subMenu }); }}
                                   className="p-2.5 text-slate-400 hover:text-red-500 transition-colors"
-                                  title="Supprimer ce code"
+                                  title="Supprimer cet accès"
                                 >
                                   <Trash2 className="h-4 w-4 sm:h-5 sm:w-5" />
                                 </button>
@@ -577,22 +613,23 @@
                 )}
               </main>
 
-              {/* Bouton flottant d'ajout (+) */}
+              {/* Bouton flottant (+) pour ajouter un accès */}
               <button
                 onClick={() => setIsAddModalOpen(true)}
                 className="fixed sm:absolute bottom-6 right-6 h-14 w-14 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-500/40 flex items-center justify-center hover:bg-blue-500 active:scale-95 transition-all duration-200 focus:outline-none focus:ring-4 focus:ring-blue-500/30 z-20"
+                title="Ajouter un accès"
               >
                 <Plus className="h-7 w-7" />
               </button>
 
-              {/* Modale d'affichage du code */}
+              {/* Modale d'affichage du code et des identifiants */}
               {selectedCodeItem && (
                 <div className="fixed sm:absolute inset-0 z-50 flex items-end sm:items-center justify-center">
                   <div 
                     className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
                     onClick={() => setSelectedCodeItem(null)}
                   ></div>
-                  <div className="bg-white w-full sm:w-[90%] rounded-t-3xl sm:rounded-3xl p-6 sm:p-8 relative z-10 shadow-2xl">
+                  <div className="bg-white w-full sm:w-[90%] max-h-[90vh] overflow-y-auto rounded-t-3xl sm:rounded-3xl p-6 sm:p-8 relative z-10 shadow-2xl">
                     <button 
                       onClick={() => setSelectedCodeItem(null)}
                       className="absolute top-4 right-4 p-2 bg-slate-100 text-slate-500 rounded-full hover:bg-slate-200 transition-colors"
@@ -600,25 +637,75 @@
                       <X className="h-5 w-5" />
                     </button>
                     
-                    <div className="text-center mb-8 mt-4">
-                      <div className="bg-blue-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600">
+                    <div className="text-center mb-6 mt-2">
+                      <div className="bg-blue-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3 text-blue-600">
                         <LockKeyhole className="h-8 w-8" />
                       </div>
                       <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-1">{selectedCodeItem.siteName}</h3>
                       <h2 className="text-2xl font-bold text-slate-800">{selectedCodeItem.subMenu}</h2>
                     </div>
-                    
-                    <div className="bg-slate-50 border-2 border-slate-100 rounded-2xl p-6 text-center mb-6">
-                      <p className="text-4xl sm:text-5xl font-black text-slate-800 tracking-widest break-all">{selectedCodeItem.code}</p>
-                    </div>
 
-                    <button
-                      onClick={() => handleCopyCode(selectedCodeItem.code)}
-                      className="w-full py-4 bg-slate-900 text-white rounded-xl font-semibold text-lg flex items-center justify-center space-x-2 hover:bg-slate-800 active:scale-[0.98] transition-all shadow-lg"
-                    >
-                      <Copy className="h-5 w-5" />
-                      <span>Copier le code</span>
-                    </button>
+                    <div className="space-y-4">
+                      {/* Bloc Code d'accès */}
+                      {selectedCodeItem.code && (
+                        <div className="bg-slate-50 border-2 border-slate-100 rounded-2xl p-5 text-center">
+                          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1">Code d'accès</span>
+                          <p className="text-3xl sm:text-4xl font-black text-slate-800 tracking-widest break-all mb-3">{selectedCodeItem.code}</p>
+                          <button
+                            onClick={() => handleCopyValue(selectedCodeItem.code, "Code")}
+                            className="w-full py-3 bg-slate-900 text-white rounded-xl font-semibold text-sm flex items-center justify-center space-x-2 hover:bg-slate-800 active:scale-[0.98] transition-all shadow"
+                          >
+                            <Copy className="h-4 w-4" />
+                            <span>Copier le code</span>
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Bloc Identifiant */}
+                      {selectedCodeItem.username && (
+                        <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 flex items-center justify-between">
+                          <div className="min-w-0 pr-3">
+                            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1 mb-0.5">
+                              <User className="h-3.5 w-3.5" /> Identifiant
+                            </span>
+                            <p className="text-base font-bold text-slate-800 truncate">{selectedCodeItem.username}</p>
+                          </div>
+                          <button
+                            onClick={() => handleCopyValue(selectedCodeItem.username, "Identifiant")}
+                            className="p-3 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 active:scale-95 transition-all shrink-0"
+                            title="Copier l'identifiant"
+                          >
+                            <Copy className="h-5 w-5" />
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Bloc Mot de passe */}
+                      {selectedCodeItem.password && (
+                        <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 flex items-center justify-between">
+                          <div className="min-w-0 pr-3">
+                            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1 mb-0.5">
+                              <KeyRound className="h-3.5 w-3.5" /> Mot de passe
+                            </span>
+                            <p className="text-base font-mono font-bold text-slate-800 truncate">{selectedCodeItem.password}</p>
+                          </div>
+                          <button
+                            onClick={() => handleCopyValue(selectedCodeItem.password, "Mot de passe")}
+                            className="p-3 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 active:scale-95 transition-all shrink-0"
+                            title="Copier le mot de passe"
+                          >
+                            <Copy className="h-5 w-5" />
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Message si aucun code ni identifiant n'a été renseigné */}
+                      {!selectedCodeItem.code && !selectedCodeItem.username && !selectedCodeItem.password && (
+                        <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-6 text-center text-slate-500 text-sm">
+                          Aucun code, identifiant ou mot de passe renseigné pour cet accès.
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -630,9 +717,9 @@
                     className="absolute inset-0 bg-black/60 backdrop-blur-sm"
                     onClick={() => setIsAddModalOpen(false)}
                   ></div>
-                  <div className="bg-white w-full h-[85vh] sm:h-auto rounded-t-3xl sm:rounded-3xl relative z-10 shadow-2xl flex flex-col">
+                  <div className="bg-white w-full h-[88vh] sm:h-auto sm:max-h-[90vh] rounded-t-3xl sm:rounded-3xl relative z-10 shadow-2xl flex flex-col">
                     
-                    <div className="flex items-center justify-between p-6 border-b border-slate-100">
+                    <div className="flex items-center justify-between p-6 border-b border-slate-100 shrink-0">
                       <h2 className="text-xl font-bold text-slate-800 flex items-center">
                         <Plus className="h-5 w-5 mr-2 text-blue-600" /> Ajouter un accès
                       </h2>
@@ -642,14 +729,14 @@
                     </div>
 
                     <div className="p-6 flex-1 overflow-y-auto">
-                      <form id="add-form" onSubmit={handleAddSubmit} className="space-y-6">
-                        <div className="space-y-2">
-                          <label className="text-sm font-semibold text-slate-700 ml-1">Ville ou Site</label>
+                      <form id="add-form" onSubmit={handleAddSubmit} className="space-y-4">
+                        <div className="space-y-1.5">
+                          <label className="text-sm font-semibold text-slate-700 ml-1">Ville ou Site *</label>
                           <input
                             list="sites-list"
                             required
                             placeholder="Ex: Beaupreau"
-                            className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                            className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                             value={formData.siteName}
                             onChange={(e) => setFormData({...formData, siteName: e.target.value})}
                           />
@@ -658,31 +745,50 @@
                           </datalist>
                         </div>
 
-                        <div className="space-y-2">
-                          <label className="text-sm font-semibold text-slate-700 ml-1">Nom de l'accès / Sous-menu</label>
+                        <div className="space-y-1.5">
+                          <label className="text-sm font-semibold text-slate-700 ml-1">Nom de l'accès / Sous-menu *</label>
                           <input
                             required
                             placeholder="Ex: Local Biomasse"
-                            className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                            className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                             value={formData.subMenu}
                             onChange={(e) => setFormData({...formData, subMenu: e.target.value})}
                           />
                         </div>
 
-                        <div className="space-y-2">
-                          <label className="text-sm font-semibold text-slate-700 ml-1">Code d'accès</label>
+                        <div className="space-y-1.5">
+                          <label className="text-sm font-semibold text-slate-700 ml-1">Code d'accès (optionnel)</label>
                           <input
-                            required
                             placeholder="Ex: 1234, 4321A..."
-                            className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all font-mono text-lg"
+                            className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all font-mono text-base"
                             value={formData.code}
                             onChange={(e) => setFormData({...formData, code: e.target.value})}
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-sm font-semibold text-slate-700 ml-1">Identifiant (optionnel)</label>
+                          <input
+                            placeholder="Ex: admin, technicien..."
+                            className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                            value={formData.username}
+                            onChange={(e) => setFormData({...formData, username: e.target.value})}
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-sm font-semibold text-slate-700 ml-1">Mot de passe (optionnel)</label>
+                          <input
+                            placeholder="Ex: MotDePasse123..."
+                            className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all font-mono text-base"
+                            value={formData.password}
+                            onChange={(e) => setFormData({...formData, password: e.target.value})}
                           />
                         </div>
                       </form>
                     </div>
                     
-                    <div className="p-6 border-t border-slate-100 bg-slate-50/50 rounded-b-3xl">
+                    <div className="p-6 border-t border-slate-100 bg-slate-50/50 rounded-b-3xl shrink-0">
                       <button
                         type="submit"
                         form="add-form"
@@ -707,9 +813,9 @@
                     className="absolute inset-0 bg-black/60 backdrop-blur-sm"
                     onClick={() => setEditModal({ ...editModal, isOpen: false })}
                   ></div>
-                  <div className="bg-white w-full h-[85vh] sm:h-auto rounded-t-3xl sm:rounded-3xl relative z-10 shadow-2xl flex flex-col">
+                  <div className="bg-white w-full h-[88vh] sm:h-auto sm:max-h-[90vh] rounded-t-3xl sm:rounded-3xl relative z-10 shadow-2xl flex flex-col">
                     
-                    <div className="flex items-center justify-between p-6 border-b border-slate-100">
+                    <div className="flex items-center justify-between p-6 border-b border-slate-100 shrink-0">
                       <h2 className="text-xl font-bold text-slate-800 flex items-center">
                         <Edit3 className="h-5 w-5 mr-2 text-blue-600" /> 
                         {editModal.type === 'site' ? "Modifier le site" : "Modifier l'accès"}
@@ -720,14 +826,14 @@
                     </div>
 
                     <div className="p-6 flex-1 overflow-y-auto">
-                      <form id="edit-form" onSubmit={handleEditSubmit} className="space-y-6">
+                      <form id="edit-form" onSubmit={handleEditSubmit} className="space-y-4">
                         
-                        <div className="space-y-2">
-                          <label className="text-sm font-semibold text-slate-700 ml-1">Ville ou Site</label>
+                        <div className="space-y-1.5">
+                          <label className="text-sm font-semibold text-slate-700 ml-1">Ville ou Site *</label>
                           <input
                             list="sites-list-edit"
                             required
-                            className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                            className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                             value={editModal.formData.siteName}
                             onChange={(e) => setEditModal({ ...editModal, formData: { ...editModal.formData, siteName: e.target.value } })}
                           />
@@ -743,23 +849,40 @@
 
                         {editModal.type === 'item' && (
                           <>
-                            <div className="space-y-2">
-                              <label className="text-sm font-semibold text-slate-700 ml-1">Nom de l'accès / Sous-menu</label>
+                            <div className="space-y-1.5">
+                              <label className="text-sm font-semibold text-slate-700 ml-1">Nom de l'accès / Sous-menu *</label>
                               <input
                                 required
-                                className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                                 value={editModal.formData.subMenu}
                                 onChange={(e) => setEditModal({ ...editModal, formData: { ...editModal.formData, subMenu: e.target.value } })}
                               />
                             </div>
 
-                            <div className="space-y-2">
-                              <label className="text-sm font-semibold text-slate-700 ml-1">Code d'accès</label>
+                            <div className="space-y-1.5">
+                              <label className="text-sm font-semibold text-slate-700 ml-1">Code d'accès (optionnel)</label>
                               <input
-                                required
-                                className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all font-mono text-lg"
+                                className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all font-mono text-base"
                                 value={editModal.formData.code}
                                 onChange={(e) => setEditModal({ ...editModal, formData: { ...editModal.formData, code: e.target.value } })}
+                              />
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="text-sm font-semibold text-slate-700 ml-1">Identifiant (optionnel)</label>
+                              <input
+                                className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                value={editModal.formData.username}
+                                onChange={(e) => setEditModal({ ...editModal, formData: { ...editModal.formData, username: e.target.value } })}
+                              />
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="text-sm font-semibold text-slate-700 ml-1">Mot de passe (optionnel)</label>
+                              <input
+                                className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all font-mono text-base"
+                                value={editModal.formData.password}
+                                onChange={(e) => setEditModal({ ...editModal, formData: { ...editModal.formData, password: e.target.value } })}
                               />
                             </div>
                           </>
@@ -767,7 +890,7 @@
                       </form>
                     </div>
                     
-                    <div className="p-6 border-t border-slate-100 bg-slate-50/50 rounded-b-3xl">
+                    <div className="p-6 border-t border-slate-100 bg-slate-50/50 rounded-b-3xl shrink-0">
                       <button
                         type="submit"
                         form="edit-form"
