@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PassKeeper</title>
+  <link rel="icon" href="resource-image-msft-eam.webp">
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -316,57 +317,66 @@
 
       if (loading) {
         return (
-          <div className="min-h-screen bg-[#07101E] flex flex-col items-center justify-center text-white space-y-4">
-            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white"></div>
-            <p className="text-sm font-light tracking-wider">Chargement de vos accès...</p>
+          <div className="min-h-screen flex flex-col items-center justify-center text-white space-y-4 relative" style={{ backgroundImage: "url('resource-image-msft-eam.webp')", backgroundSize: 'cover', backgroundPosition: 'center' }}>
+            <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm"></div>
+            <div className="z-10 flex flex-col items-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-400 mb-4"></div>
+              <p className="text-sm font-medium tracking-wider text-slate-200">Chargement de vos accès...</p>
+            </div>
           </div>
         );
       }
 
       return (
-        <div className="min-h-screen bg-[#07101E] text-slate-800 font-sans selection:bg-blue-200">
-          <div className="max-w-md mx-auto bg-[#0A1628] min-h-screen relative shadow-2xl shadow-black/50 flex flex-col overflow-hidden">
+        <div className="min-h-screen text-slate-800 font-sans selection:bg-blue-200 relative" style={{ backgroundImage: "url('resource-image-msft-eam.webp')", backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed' }}>
+          {/* Calque assombrissant allégé pour mieux voir le fond */}
+          <div className="absolute inset-0 bg-slate-900/30"></div>
+          
+          <div className="max-w-md mx-auto bg-slate-900/40 backdrop-blur-md min-h-screen relative shadow-2xl shadow-black/50 flex flex-col overflow-hidden border-x border-white/5">
             
-            <header className="px-6 pt-10 pb-4 bg-[#0A1628] flex items-center justify-end z-10 sticky top-0 border-b border-white/5">
+            <header className="px-6 pt-10 pb-4 bg-transparent flex items-center justify-between z-10 sticky top-0 border-b border-white/10">
+              <div className="flex items-center space-x-3">
+                <img src="resource-image-msft-eam.webp" alt="Logo" className="w-10 h-10 rounded-xl object-cover shadow-lg border border-white/20" />
+              </div>
               <div className="flex items-center space-x-2">
                 <input type="file" accept=".json" ref={fileInputRef} onChange={handleImport} className="hidden" />
-                <button onClick={() => fileInputRef.current?.click()} className="p-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-full transition-colors" title="Importer une sauvegarde">
+                <button onClick={() => fileInputRef.current?.click()} className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors backdrop-blur-sm shadow-sm" title="Importer une sauvegarde">
                   <Upload className="h-5 w-5" />
                 </button>
-                <button onClick={handleExport} className="p-2 bg-white/5 hover:bg-white/10 text-slate-300 rounded-full transition-colors" title="Exporter les données">
+                <button onClick={handleExport} className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors backdrop-blur-sm shadow-sm" title="Exporter les données">
                   <Download className="h-5 w-5" />
                 </button>
               </div>
             </header>
 
-            <div className="px-6 pb-4 z-10 bg-[#0A1628]">
+            <div className="px-6 pb-4 pt-4 z-10 bg-transparent">
               <div className="relative group">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                  <Search className="h-5 w-5 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
+                  <Search className="h-5 w-5 text-slate-300 group-focus-within:text-blue-400 transition-colors" />
                 </div>
                 <input
                   type="text"
                   placeholder="Rechercher ville, site, accès..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="block w-full pl-11 pr-4 py-4 bg-white/5 border-transparent rounded-2xl text-white placeholder-slate-400 focus:bg-white focus:text-slate-900 focus:ring-4 focus:ring-blue-500/30 transition-all duration-300 outline-none shadow-inner"
+                  className="block w-full pl-11 pr-4 py-4 bg-white/10 backdrop-blur-md border border-white/10 rounded-2xl text-white placeholder-slate-300 focus:bg-white/20 focus:text-white focus:ring-4 focus:ring-blue-500/30 transition-all duration-300 outline-none shadow-inner"
                 />
                 {searchQuery && (
-                  <button onClick={() => setSearchQuery('')} className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 hover:text-white">
+                  <button onClick={() => setSearchQuery('')} className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 hover:text-white transition-colors">
                     <X className="h-4 w-4" />
                   </button>
                 )}
               </div>
             </div>
 
-            <main className="flex-1 px-4 pb-24 overflow-y-auto space-y-4 custom-scrollbar">
+            <main className="flex-1 px-4 pb-24 overflow-y-auto space-y-4 custom-scrollbar z-10">
               {Object.keys(filteredAndGroupedData).length === 0 ? (
                 <div className="text-center py-12 px-6">
-                  <div className="bg-white/5 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <Folder className="h-8 w-8 text-blue-400/50" />
+                  <div className="bg-white/10 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 backdrop-blur-md">
+                    <Folder className="h-8 w-8 text-white/50" />
                   </div>
-                  <p className="text-slate-300 font-medium text-lg">Aucun résultat trouvé</p>
-                  <p className="text-slate-500 text-sm mt-2">Essayez un autre mot-clé ou ajoutez un nouvel accès.</p>
+                  <p className="text-slate-200 font-medium text-lg">Aucun résultat trouvé</p>
+                  <p className="text-slate-400 text-sm mt-2">Essayez un autre mot-clé ou ajoutez un nouvel accès.</p>
                 </div>
               ) : (
                 Object.entries(filteredAndGroupedData).map(([siteName, subMenus], index) => {
