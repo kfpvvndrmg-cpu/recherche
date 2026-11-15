@@ -119,30 +119,25 @@
       const [toastMessage, setToastMessage] = useState('');
       const [selectedCodeItem, setSelectedCodeItem] = useState(null);
       const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-      const [formData, setFormData] = useState({ siteName: '', subMenu: '', code: '', username: '', password: '', attachment: null });
+      const [formData, setFormData] = useState({ siteName: '', subMenu: '', code: '', username: '', password: '', attachments: [null, null, null] });
       const [isSubmitting, setIsSubmitting] = useState(false);
       const [itemToDelete, setItemToDelete] = useState(null);
-      const [editModal, setEditModal] = useState({ isOpen: false, type: null, data: null, formData: { siteName: '', subMenu: '', code: '', username: '', password: '', attachment: null } });
-      const [previewFile, setPreviewFile] = useState(null);
-      const [previewBlobUrl, setPreviewBlobUrl] = useState(null);
+      const [editModal, setEditModal] = useState({ isOpen: false, type: null, data: null, formData: { siteName: '', subMenu: '', code: '', username: '', password: '', attachments: [null, null, null] } });
       
       const fileInputRef = useRef(null);
-      const addPhotoInputRef = useRef(null);
-      const addDocInputRef = useRef(null);
-      const editPhotoInputRef = useRef(null);
-      const editDocInputRef = useRef(null);
+      const addPhotoRefs = [useRef(null), useRef(null), useRef(null)];
+      const addDocRefs = [useRef(null), useRef(null), useRef(null)];
+      const editPhotoRefs = [useRef(null), useRef(null), useRef(null)];
+      const editDocRefs = [useRef(null), useRef(null), useRef(null)];
 
-      // Conversion du fichier Base64 en Blob URL pour contourner le blocage des PDF sur mobile
-      useEffect(() => {
-        if (!previewFile || !previewFile.data) {
-          setPreviewBlobUrl(null);
-          return;
-        }
+      // Conversion Base64 vers Blob URL instantanée pour lecture native mobile/PC sans ralentissement
+      const openAttachmentNative = (att) => {
+        if (!att || !att.data) return;
         try {
-          if (previewFile.data.startsWith('data:')) {
-            const parts = previewFile.data.split(',');
+          if (att.data.startsWith('data:')) {
+            const parts = att.data.split(',');
             const mimeMatch = parts[0].match(/:(.*?);/);
-            const mime = mimeMatch ? mimeMatch[1] : (previewFile.type || 'application/octet-stream');
+            const mime = mimeMatch ? mimeMatch[1] : (att.type || 'application/octet-stream');
             const bstr = atob(parts[1]);
             let n = bstr.length;
             const u8arr = new Uint8Array(n);
@@ -151,46 +146,74 @@
             }
             const blob = new Blob([u8arr], { type: mime });
             const url = URL.createObjectURL(blob);
-            setPreviewBlobUrl(url);
-            return () => URL.revokeObjectURL(url);
+            const win = window.open(url, '_blank');
+            if (!win) {
+              const a = document.createElement('a');
+              a.href = url;
+              a.target = '_blank';
+              a.rel = 'noopener noreferrer';
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+            }
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
           } else {
-            setPreviewBlobUrl(previewFile.data);
+            window.open(att.data, '_blank');
           }
         } catch (err) {
-          console.error("Erreur conversion Blob:", err);
-          setPreviewBlobUrl(previewFile.data);
+          console.error("Erreur d'ouverture du fichier:", err);
+          showToast("Impossible d'ouvrir directement, utilisez le bouton télécharger.");
         }
-      }, [previewFile]);
+      };
 
-      // Utilitaire pour compresser une photo ou lire un document (PDF, etc.)
+      // Helper pour récupérer la liste normalisée des pièces jointes (compatibilité ancien et nouveau format)
+      const getItemAttachments = (item) => {
+        if (!item) return [];
+        if (Array.isArray(item.attachments)) {
+          return item.attachments.filter(Boolean);
+        }
+        if (item.attachment) {
+          return [item.attachment];
+        }
+        return [];
+      };
+
+      // Traitement et compression des photos / fichiers joints
       const processAttachmentFile = (file) => {
         return new Promise((resolve, reject) => {
-          if (!file) return resolve(null);
+          if (!file) {
+            reject(new Error("Aucun fichier sélectionné."));
+            return;
+          }
 
-          // Si c'est une image, on la redimensionne/compresse pour économiser de l'espace (max 800px, JPEG 70%)
-          if (file.type.startsWith('image/')) {
+          if (file.type && file.type.startsWith('image/')) {
             const reader = new FileReader();
             reader.onload = (e) => {
               const img = new Image();
               img.onload = () => {
                 const canvas = document.createElement('canvas');
-                const MAX_SIZE = 800;
+                const MAX_SIZE = 1024;
                 let width = img.width;
                 let height = img.height;
 
-                if (width > height && width > MAX_SIZE) {
-                  height *= MAX_SIZE / width;
-                  width = MAX_SIZE;
-                } else if (height > MAX_SIZE) {
-                  width *= MAX_SIZE / height;
-                  height = MAX_SIZE;
+                if (width > height) {
+                  if (width > MAX_SIZE) {
+                    height *= MAX_SIZE / width;
+                    width = MAX_SIZE;
+                  }
+                } else {
+                  if (height > MAX_SIZE) {
+                    width *= MAX_SIZE / height;
+                    height = MAX_SIZE;
+                  }
                 }
 
                 canvas.width = width;
                 canvas.height = height;
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
-                const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.7);
+                const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.75);
+
                 resolve({
                   name: file.name || 'photo.jpg',
                   type: 'image/jpeg',
@@ -222,21 +245,45 @@
         });
       };
 
-      const handleFileAttachment = async (e, targetMode) => {
+      const handleFileAttachment = async (e, targetMode, slotIndex) => {
         const file = e.target.files[0];
         if (!file) return;
         try {
           const processed = await processAttachmentFile(file);
           if (targetMode === 'add') {
-            setFormData(prev => ({ ...prev, attachment: processed }));
+            setFormData(prev => {
+              const updated = [...(prev.attachments || [null, null, null])];
+              updated[slotIndex] = processed;
+              return { ...prev, attachments: updated };
+            });
           } else {
-            setEditModal(prev => ({ ...prev, formData: { ...prev.formData, attachment: processed } }));
+            setEditModal(prev => {
+              const updated = [...(prev.formData.attachments || [null, null, null])];
+              updated[slotIndex] = processed;
+              return { ...prev, formData: { ...prev.formData, attachments: updated } };
+            });
           }
-          showToast("Fichier joint prêt !");
+          showToast(`Document ${slotIndex + 1} prêt !`);
         } catch (err) {
           showToast(err.message || "Erreur lors de l'ajout du fichier.");
         } finally {
           e.target.value = '';
+        }
+      };
+
+      const removeAttachmentSlot = (targetMode, slotIndex) => {
+        if (targetMode === 'add') {
+          setFormData(prev => {
+            const updated = [...(prev.attachments || [null, null, null])];
+            updated[slotIndex] = null;
+            return { ...prev, attachments: updated };
+          });
+        } else {
+          setEditModal(prev => {
+            const updated = [...(prev.formData.attachments || [null, null, null])];
+            updated[slotIndex] = null;
+            return { ...prev, formData: { ...prev.formData, attachments: updated } };
+          });
         }
       };
 
@@ -313,15 +360,12 @@
           return acc;
         }, {});
 
-        // Fonction de comparaison alphabétique insensible aux accents et à la casse
         const sortAlpha = (a, b) => a.localeCompare(b, 'fr', { sensitivity: 'base' });
 
-        // Tri alphabétique des sous-menus à l'intérieur de chaque site
         Object.keys(grouped).forEach((site) => {
           grouped[site].sort((a, b) => sortAlpha(a.subMenu || '', b.subMenu || ''));
         });
 
-        // Construction de l'objet trié par ordre alphabétique des sites
         const sortObjectByKeys = (obj) => {
           return Object.keys(obj)
             .sort(sortAlpha)
@@ -400,13 +444,14 @@
           return;
         }
         setIsSubmitting(true);
+        const cleanAttachments = (formData.attachments || []).filter(Boolean);
         const newEntry = {
           siteName: formData.siteName.trim(),
           subMenu: formData.subMenu.trim(),
           code: formData.code ? formData.code.trim() : '',
           username: formData.username ? formData.username.trim() : '',
           password: formData.password ? formData.password.trim() : '',
-          attachment: formData.attachment || null
+          attachments: cleanAttachments
         };
 
         try {
@@ -414,12 +459,11 @@
             const collectionRef = collection(db, 'artifacts', appId, 'users', user.uid, 'access_codes');
             await addDoc(collectionRef, newEntry);
           } else {
-            // Mode local (GitHub Pages / Mobile)
             const newItemWithId = { id: Date.now().toString(), ...newEntry };
             saveToLocal([...items, newItemWithId]);
           }
           setIsAddModalOpen(false);
-          setFormData({ siteName: '', subMenu: '', code: '', username: '', password: '', attachment: null });
+          setFormData({ siteName: '', subMenu: '', code: '', username: '', password: '', attachments: [null, null, null] });
           showToast("Accès ajouté avec succès !");
         } catch (error) {
           console.error("Erreur d'ajout:", error);
@@ -451,7 +495,6 @@
               showToast("Site entier supprimé.");
             }
           } else {
-            // Mode local
             if (itemToDelete.type === 'item') {
               saveToLocal(items.filter(i => i.id !== itemToDelete.id));
               showToast("Accès supprimé.");
@@ -469,8 +512,10 @@
 
       const openEditModal = (type, data) => {
         if (type === 'site') {
-          setEditModal({ isOpen: true, type, data, formData: { siteName: data.siteName, subMenu: '', code: '', username: '', password: '', attachment: null } });
+          setEditModal({ isOpen: true, type, data, formData: { siteName: data.siteName, subMenu: '', code: '', username: '', password: '', attachments: [null, null, null] } });
         } else {
+          const existingAtts = getItemAttachments(data);
+          const paddedAtts = [existingAtts[0] || null, existingAtts[1] || null, existingAtts[2] || null];
           setEditModal({ 
             isOpen: true, 
             type, 
@@ -481,7 +526,7 @@
               code: data.code || '',
               username: data.username || '',
               password: data.password || '',
-              attachment: data.attachment || null
+              attachments: paddedAtts
             } 
           });
         }
@@ -490,6 +535,7 @@
       const handleEditSubmit = async (e) => {
         e.preventDefault();
         setIsSubmitting(true);
+        const cleanAttachments = (editModal.formData.attachments || []).filter(Boolean);
         try {
           if (isFirebaseEnabled && user && db) {
             if (editModal.type === 'site') {
@@ -517,12 +563,12 @@
                 code: editModal.formData.code ? editModal.formData.code.trim() : '',
                 username: editModal.formData.username ? editModal.formData.username.trim() : '',
                 password: editModal.formData.password ? editModal.formData.password.trim() : '',
-                attachment: editModal.formData.attachment || null
+                attachments: cleanAttachments,
+                attachment: null
               });
               showToast("Accès modifié avec succès.");
             }
           } else {
-            // Mode local
             if (editModal.type === 'site') {
               const newSiteName = editModal.formData.siteName.trim();
               if (newSiteName && newSiteName !== editModal.data.siteName) {
@@ -543,13 +589,14 @@
                 code: editModal.formData.code ? editModal.formData.code.trim() : '',
                 username: editModal.formData.username ? editModal.formData.username.trim() : '',
                 password: editModal.formData.password ? editModal.formData.password.trim() : '',
-                attachment: editModal.formData.attachment || null
+                attachments: cleanAttachments,
+                attachment: undefined
               } : i);
               saveToLocal(updated);
               showToast("Accès modifié avec succès.");
             }
           }
-          setEditModal({ isOpen: false, type: null, data: null, formData: { siteName: '', subMenu: '', code: '', username: '', password: '', attachment: null } });
+          setEditModal({ isOpen: false, type: null, data: null, formData: { siteName: '', subMenu: '', code: '', username: '', password: '', attachments: [null, null, null] } });
         } catch (error) {
           console.error("Erreur de modification:", error);
           showToast("Erreur lors de la modification.");
@@ -589,27 +636,30 @@
                   const collectionRef = collection(db, 'artifacts', appId, 'users', user.uid, 'access_codes');
                   validItems.forEach(item => {
                     const newDocRef = doc(collectionRef);
+                    const atts = Array.isArray(item.attachments) ? item.attachments.filter(Boolean) : (item.attachment ? [item.attachment] : []);
                     batch.set(newDocRef, { 
                       siteName: item.siteName, 
                       subMenu: item.subMenu, 
                       code: item.code || '',
                       username: item.username || '',
                       password: item.password || '',
-                      attachment: item.attachment || null
+                      attachments: atts
                     });
                   });
                   await batch.commit();
                 } else {
-                  // Mode local
-                  const newItemsWithIds = validItems.map((item, idx) => ({
-                    id: (Date.now() + idx).toString(),
-                    siteName: item.siteName,
-                    subMenu: item.subMenu,
-                    code: item.code || '',
-                    username: item.username || '',
-                    password: item.password || '',
-                    attachment: item.attachment || null
-                  }));
+                  const newItemsWithIds = validItems.map((item, idx) => {
+                    const atts = Array.isArray(item.attachments) ? item.attachments.filter(Boolean) : (item.attachment ? [item.attachment] : []);
+                    return {
+                      id: (Date.now() + idx).toString(),
+                      siteName: item.siteName,
+                      subMenu: item.subMenu,
+                      code: item.code || '',
+                      username: item.username || '',
+                      password: item.password || '',
+                      attachments: atts
+                    };
+                  });
                   saveToLocal([...items, ...newItemsWithIds]);
                 }
                 showToast(`${validItems.length} accès importés !`);
@@ -754,41 +804,47 @@
                         <div 
                           className={`transition-all duration-300 ease-in-out bg-black/15 border-t border-white/15 ${isExpanded ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0 overflow-hidden'}`}
                         >
-                          {subMenus.map((sub) => (
-                            <div
-                              key={sub.id}
-                              className="w-full flex items-center justify-between hover:bg-white/15 transition-colors border-b border-white/10 last:border-0"
-                            >
-                              <button
-                                onClick={() => setSelectedCodeItem(sub)}
-                                className="flex-1 px-4 sm:px-6 py-4 flex items-center justify-between focus:outline-none text-left min-w-0"
+                          {subMenus.map((sub) => {
+                            const subAtts = getItemAttachments(sub);
+                            return (
+                              <div
+                                key={sub.id}
+                                className="w-full flex items-center justify-between hover:bg-white/15 transition-colors border-b border-white/10 last:border-0"
                               >
-                                <div className="flex items-center space-x-2 min-w-0 pr-2">
-                                  <span className="font-medium text-white drop-shadow truncate">{sub.subMenu}</span>
-                                  {sub.attachment && (
-                                    <Paperclip className="h-4 w-4 text-blue-300 shrink-0" title="Pièce jointe / Photo" />
-                                  )}
+                                <button
+                                  onClick={() => setSelectedCodeItem(sub)}
+                                  className="flex-1 px-4 sm:px-6 py-4 flex items-center justify-between focus:outline-none text-left min-w-0"
+                                >
+                                  <div className="flex items-center space-x-2 min-w-0 pr-2">
+                                    <span className="font-medium text-white drop-shadow truncate">{sub.subMenu}</span>
+                                    {subAtts.length > 0 && (
+                                      <span className="inline-flex items-center gap-0.5 text-xs bg-blue-500/30 text-blue-200 px-1.5 py-0.5 rounded-full shrink-0" title={`${subAtts.length} pièce(s) jointe(s)`}>
+                                        <Paperclip className="h-3 w-3" />
+                                        {subAtts.length > 1 && <span>{subAtts.length}</span>}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <ChevronRight className="h-4 w-4 text-slate-200 shrink-0" />
+                                </button>
+                                <div className="flex items-center pr-2 shrink-0">
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); openEditModal('item', sub); }}
+                                    className="p-2.5 text-slate-300 hover:text-blue-300 transition-colors"
+                                    title="Modifier cet accès"
+                                  >
+                                    <Edit3 className="h-4 w-4 sm:h-5 sm:w-5" />
+                                  </button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setItemToDelete({ type: 'item', id: sub.id, subMenu: sub.subMenu }); }}
+                                    className="p-2.5 text-slate-300 hover:text-red-400 transition-colors"
+                                    title="Supprimer cet accès"
+                                  >
+                                    <Trash2 className="h-4 w-4 sm:h-5 sm:w-5" />
+                                  </button>
                                 </div>
-                                <ChevronRight className="h-4 w-4 text-slate-200 shrink-0" />
-                              </button>
-                              <div className="flex items-center pr-2 shrink-0">
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); openEditModal('item', sub); }}
-                                  className="p-2.5 text-slate-300 hover:text-blue-300 transition-colors"
-                                  title="Modifier cet accès"
-                                >
-                                  <Edit3 className="h-4 w-4 sm:h-5 sm:w-5" />
-                                </button>
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); setItemToDelete({ type: 'item', id: sub.id, subMenu: sub.subMenu }); }}
-                                  className="p-2.5 text-slate-300 hover:text-red-400 transition-colors"
-                                  title="Supprimer cet accès"
-                                >
-                                  <Trash2 className="h-4 w-4 sm:h-5 sm:w-5" />
-                                </button>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     );
@@ -882,60 +938,65 @@
                         </div>
                       )}
 
-                      {/* Bloc Photo / Document joint */}
-                      {selectedCodeItem.attachment && (
-                        <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
-                          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                            <Paperclip className="h-3.5 w-3.5" /> Photo / Document joint
+                      {/* Bloc Photos / Documents joints (jusqu'à 3) */}
+                      {getItemAttachments(selectedCodeItem).length > 0 && (
+                        <div className="space-y-3">
+                          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1 px-1">
+                            <Paperclip className="h-3.5 w-3.5" /> Photos / Documents joints ({getItemAttachments(selectedCodeItem).length})
                           </span>
 
-                          {selectedCodeItem.attachment.type?.startsWith('image/') ? (
-                            <div 
-                              className="relative group cursor-pointer overflow-hidden rounded-xl border border-slate-200 bg-black/5"
-                              onClick={() => setPreviewFile(selectedCodeItem.attachment)}
-                            >
-                              <img 
-                                src={selectedCodeItem.attachment.data} 
-                                alt={selectedCodeItem.attachment.name}
-                                className="w-full max-h-48 object-cover"
-                              />
-                              <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                <span className="bg-white/90 text-slate-900 px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1 shadow">
-                                  <Eye className="h-4 w-4" /> Agrandir la photo
-                                </span>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex items-center space-x-3 bg-white p-3 rounded-xl border border-slate-200">
-                              <div className="p-2.5 bg-blue-50 text-blue-600 rounded-lg shrink-0">
-                                <FileText className="h-6 w-6" />
-                              </div>
-                              <span className="text-sm font-medium text-slate-700 truncate flex-1">{selectedCodeItem.attachment.name}</span>
-                            </div>
-                          )}
+                          {getItemAttachments(selectedCodeItem).map((att, idx) => (
+                            <div key={idx} className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
+                              {att.type?.startsWith('image/') ? (
+                                <div 
+                                  className="relative group cursor-pointer overflow-hidden rounded-xl border border-slate-200 bg-black/5"
+                                  onClick={() => openAttachmentNative(att)}
+                                >
+                                  <img 
+                                    src={att.data} 
+                                    alt={att.name}
+                                    className="w-full max-h-48 object-cover"
+                                  />
+                                  <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                    <span className="bg-white/90 text-slate-900 px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1 shadow">
+                                      <Eye className="h-4 w-4" /> Ouvrir la photo
+                                    </span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-center space-x-3 bg-white p-3 rounded-xl border border-slate-200">
+                                  <div className="p-2.5 bg-blue-50 text-blue-600 rounded-lg shrink-0">
+                                    <FileText className="h-6 w-6" />
+                                  </div>
+                                  <span className="text-sm font-medium text-slate-700 truncate flex-1">{att.name || `Document ${idx + 1}`}</span>
+                                </div>
+                              )}
 
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => setPreviewFile(selectedCodeItem.attachment)}
-                              className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl font-semibold text-sm flex items-center justify-center gap-1.5 hover:bg-blue-700 active:scale-[0.98] transition-all"
-                            >
-                              <Eye className="h-4 w-4" />
-                              <span>Consulter</span>
-                            </button>
-                            <a
-                              href={selectedCodeItem.attachment.data}
-                              download={selectedCodeItem.attachment.name || 'document'}
-                              className="py-2.5 px-4 bg-slate-200 text-slate-700 rounded-xl font-semibold text-sm flex items-center justify-center hover:bg-slate-300 active:scale-[0.98] transition-all"
-                              title="Télécharger"
-                            >
-                              <Download className="h-4 w-4" />
-                            </a>
-                          </div>
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => openAttachmentNative(att)}
+                                  className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl font-semibold text-sm flex items-center justify-center gap-1.5 hover:bg-blue-700 active:scale-[0.98] transition-all"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                  <span>Consulter</span>
+                                </button>
+                                <a
+                                  href={att.data}
+                                  download={att.name || `document_${idx + 1}`}
+                                  className="py-2.5 px-4 bg-slate-200 text-slate-700 rounded-xl font-semibold text-sm flex items-center justify-center hover:bg-slate-300 active:scale-[0.98] transition-all"
+                                  title="Télécharger"
+                                >
+                                  <Download className="h-4 w-4" />
+                                </a>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       )}
 
                       {/* Message si aucun code, identifiant, mot de passe ou document n'a été renseigné */}
-                      {!selectedCodeItem.code && !selectedCodeItem.username && !selectedCodeItem.password && !selectedCodeItem.attachment && (
+                      {!selectedCodeItem.code && !selectedCodeItem.username && !selectedCodeItem.password && getItemAttachments(selectedCodeItem).length === 0 && (
                         <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-6 text-center text-slate-500 text-sm">
                           Aucun code, identifiant ou document renseigné pour cet accès.
                         </div>
@@ -1021,53 +1082,60 @@
                           />
                         </div>
 
-                        {/* Section Photo ou Document (Ajout) */}
-                        <div className="space-y-2 pt-1">
-                          <label className="text-sm font-semibold text-slate-700 ml-1">Photo ou Document (optionnel)</label>
-                          <input type="file" accept="image/*" capture="environment" ref={addPhotoInputRef} onChange={(e) => handleFileAttachment(e, 'add')} className="hidden" />
-                          <input type="file" accept="image/*,application/pdf,.doc,.docx,.txt" ref={addDocInputRef} onChange={(e) => handleFileAttachment(e, 'add')} className="hidden" />
+                        {/* Section 3 Lignes Photos ou Documents (Ajout) */}
+                        <div className="space-y-3 pt-1">
+                          <label className="text-sm font-semibold text-slate-700 ml-1 block">Photos ou Documents (jusqu'à 3)</label>
+                          {[0, 1, 2].map((slotIdx) => {
+                            const att = formData.attachments?.[slotIdx];
+                            return (
+                              <div key={slotIdx} className="space-y-1">
+                                <input type="file" accept="image/*" capture="environment" ref={addPhotoRefs[slotIdx]} onChange={(e) => handleFileAttachment(e, 'add', slotIdx)} className="hidden" />
+                                <input type="file" accept="image/*,application/pdf,.doc,.docx,.txt" ref={addDocRefs[slotIdx]} onChange={(e) => handleFileAttachment(e, 'add', slotIdx)} className="hidden" />
 
-                          {!formData.attachment ? (
-                            <div className="grid grid-cols-2 gap-3">
-                              <button
-                                type="button"
-                                onClick={() => addPhotoInputRef.current?.click()}
-                                className="flex items-center justify-center gap-2 p-3.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-xl font-semibold text-sm hover:bg-blue-100 active:scale-95 transition-all"
-                              >
-                                <Camera className="h-5 w-5" />
-                                <span>Prendre photo</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => addDocInputRef.current?.click()}
-                                className="flex items-center justify-center gap-2 p-3.5 bg-slate-100 text-slate-700 border border-slate-200 rounded-xl font-semibold text-sm hover:bg-slate-200 active:scale-95 transition-all"
-                              >
-                                <FileText className="h-5 w-5" />
-                                <span>Document</span>
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="flex items-center justify-between p-3 bg-blue-50/70 border border-blue-200 rounded-xl">
-                              <div className="flex items-center space-x-3 min-w-0">
-                                {formData.attachment.type?.startsWith('image/') ? (
-                                  <img src={formData.attachment.data} alt="Aperçu" className="h-10 w-10 rounded-lg object-cover shrink-0 border border-blue-200" />
+                                {!att ? (
+                                  <div className="grid grid-cols-2 gap-2.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => addPhotoRefs[slotIdx].current?.click()}
+                                      className="flex items-center justify-center gap-2 p-3 bg-blue-50 text-blue-700 border border-blue-200 rounded-xl font-semibold text-xs sm:text-sm hover:bg-blue-100 active:scale-95 transition-all"
+                                    >
+                                      <Camera className="h-4 w-4 shrink-0" />
+                                      <span>Photo {slotIdx + 1}</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => addDocRefs[slotIdx].current?.click()}
+                                      className="flex items-center justify-center gap-2 p-3 bg-slate-100 text-slate-700 border border-slate-200 rounded-xl font-semibold text-xs sm:text-sm hover:bg-slate-200 active:scale-95 transition-all"
+                                    >
+                                      <FileText className="h-4 w-4 shrink-0" />
+                                      <span>Document {slotIdx + 1}</span>
+                                    </button>
+                                  </div>
                                 ) : (
-                                  <div className="p-2 bg-blue-100 text-blue-600 rounded-lg shrink-0">
-                                    <FileText className="h-5 w-5" />
+                                  <div className="flex items-center justify-between p-2.5 bg-blue-50/70 border border-blue-200 rounded-xl">
+                                    <div className="flex items-center space-x-3 min-w-0">
+                                      {att.type?.startsWith('image/') ? (
+                                        <img src={att.data} alt="Aperçu" className="h-9 w-9 rounded-lg object-cover shrink-0 border border-blue-200" />
+                                      ) : (
+                                        <div className="p-2 bg-blue-100 text-blue-600 rounded-lg shrink-0">
+                                          <FileText className="h-4 w-4" />
+                                        </div>
+                                      )}
+                                      <span className="text-sm font-medium text-slate-700 truncate">{att.name}</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => removeAttachmentSlot('add', slotIdx)}
+                                      className="p-1.5 text-red-500 hover:bg-red-100 rounded-full shrink-0"
+                                      title="Retirer la pièce jointe"
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </button>
                                   </div>
                                 )}
-                                <span className="text-sm font-medium text-slate-700 truncate">{formData.attachment.name}</span>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => setFormData({ ...formData, attachment: null })}
-                                className="p-1.5 text-red-500 hover:bg-red-100 rounded-full shrink-0"
-                                title="Retirer la pièce jointe"
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
-                            </div>
-                          )}
+                            );
+                          })}
                         </div>
                       </form>
                     </div>
@@ -1170,53 +1238,60 @@
                               />
                             </div>
 
-                            {/* Section Photo ou Document (Modification) */}
-                            <div className="space-y-2 pt-1">
-                              <label className="text-sm font-semibold text-slate-700 ml-1">Photo ou Document (optionnel)</label>
-                              <input type="file" accept="image/*" capture="environment" ref={editPhotoInputRef} onChange={(e) => handleFileAttachment(e, 'edit')} className="hidden" />
-                              <input type="file" accept="image/*,application/pdf,.doc,.docx,.txt" ref={editDocInputRef} onChange={(e) => handleFileAttachment(e, 'edit')} className="hidden" />
+                            {/* Section 3 Lignes Photos ou Documents (Modification) */}
+                            <div className="space-y-3 pt-1">
+                              <label className="text-sm font-semibold text-slate-700 ml-1 block">Photos ou Documents (jusqu'à 3)</label>
+                              {[0, 1, 2].map((slotIdx) => {
+                                const att = editModal.formData.attachments?.[slotIdx];
+                                return (
+                                  <div key={slotIdx} className="space-y-1">
+                                    <input type="file" accept="image/*" capture="environment" ref={editPhotoRefs[slotIdx]} onChange={(e) => handleFileAttachment(e, 'edit', slotIdx)} className="hidden" />
+                                    <input type="file" accept="image/*,application/pdf,.doc,.docx,.txt" ref={editDocRefs[slotIdx]} onChange={(e) => handleFileAttachment(e, 'edit', slotIdx)} className="hidden" />
 
-                              {!editModal.formData.attachment ? (
-                                <div className="grid grid-cols-2 gap-3">
-                                  <button
-                                    type="button"
-                                    onClick={() => editPhotoInputRef.current?.click()}
-                                    className="flex items-center justify-center gap-2 p-3.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-xl font-semibold text-sm hover:bg-blue-100 active:scale-95 transition-all"
-                                  >
-                                    <Camera className="h-5 w-5" />
-                                    <span>Prendre photo</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => editDocInputRef.current?.click()}
-                                    className="flex items-center justify-center gap-2 p-3.5 bg-slate-100 text-slate-700 border border-slate-200 rounded-xl font-semibold text-sm hover:bg-slate-200 active:scale-95 transition-all"
-                                  >
-                                    <FileText className="h-5 w-5" />
-                                    <span>Document</span>
-                                  </button>
-                                </div>
-                              ) : (
-                                <div className="flex items-center justify-between p-3 bg-blue-50/70 border border-blue-200 rounded-xl">
-                                  <div className="flex items-center space-x-3 min-w-0">
-                                    {editModal.formData.attachment.type?.startsWith('image/') ? (
-                                      <img src={editModal.formData.attachment.data} alt="Aperçu" className="h-10 w-10 rounded-lg object-cover shrink-0 border border-blue-200" />
+                                    {!att ? (
+                                      <div className="grid grid-cols-2 gap-2.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => editPhotoRefs[slotIdx].current?.click()}
+                                          className="flex items-center justify-center gap-2 p-3 bg-blue-50 text-blue-700 border border-blue-200 rounded-xl font-semibold text-xs sm:text-sm hover:bg-blue-100 active:scale-95 transition-all"
+                                        >
+                                          <Camera className="h-4 w-4 shrink-0" />
+                                          <span>Photo {slotIdx + 1}</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => editDocRefs[slotIdx].current?.click()}
+                                          className="flex items-center justify-center gap-2 p-3 bg-slate-100 text-slate-700 border border-slate-200 rounded-xl font-semibold text-xs sm:text-sm hover:bg-slate-200 active:scale-95 transition-all"
+                                        >
+                                          <FileText className="h-4 w-4 shrink-0" />
+                                          <span>Document {slotIdx + 1}</span>
+                                        </button>
+                                      </div>
                                     ) : (
-                                      <div className="p-2 bg-blue-100 text-blue-600 rounded-lg shrink-0">
-                                        <FileText className="h-5 w-5" />
+                                      <div className="flex items-center justify-between p-2.5 bg-blue-50/70 border border-blue-200 rounded-xl">
+                                        <div className="flex items-center space-x-3 min-w-0">
+                                          {att.type?.startsWith('image/') ? (
+                                            <img src={att.data} alt="Aperçu" className="h-9 w-9 rounded-lg object-cover shrink-0 border border-blue-200" />
+                                          ) : (
+                                            <div className="p-2 bg-blue-100 text-blue-600 rounded-lg shrink-0">
+                                              <FileText className="h-4 w-4" />
+                                            </div>
+                                          )}
+                                          <span className="text-sm font-medium text-slate-700 truncate">{att.name}</span>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => removeAttachmentSlot('edit', slotIdx)}
+                                          className="p-1.5 text-red-500 hover:bg-red-100 rounded-full shrink-0"
+                                          title="Retirer la pièce jointe"
+                                        >
+                                          <X className="h-4 w-4" />
+                                        </button>
                                       </div>
                                     )}
-                                    <span className="text-sm font-medium text-slate-700 truncate">{editModal.formData.attachment.name}</span>
                                   </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => setEditModal({ ...editModal, formData: { ...editModal.formData, attachment: null } })}
-                                    className="p-1.5 text-red-500 hover:bg-red-100 rounded-full shrink-0"
-                                    title="Retirer la pièce jointe"
-                                  >
-                                    <X className="h-4 w-4" />
-                                  </button>
-                                </div>
-                              )}
+                                );
+                              })}
                             </div>
                           </>
                         )}
@@ -1271,88 +1346,6 @@
                         Supprimer
                       </button>
                     </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Visionneuse Plein Écran (Photo ou Document PDF) */}
-              {previewFile && (
-                <div className="fixed inset-0 z-[70] bg-black/95 flex flex-col">
-                  <div className="flex items-center justify-between p-4 text-white border-b border-white/15 bg-black/50">
-                    <span className="font-medium truncate pr-4 text-sm">{previewFile.name}</span>
-                    <div className="flex items-center space-x-2 shrink-0">
-                      <a
-                        href={previewBlobUrl || previewFile.data}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-1.5 bg-blue-600 rounded-full hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1"
-                        title="Ouvrir dans un nouvel onglet"
-                      >
-                        <Eye className="h-4 w-4" /> Ouvrir
-                      </a>
-                      <a
-                        href={previewBlobUrl || previewFile.data}
-                        download={previewFile.name || 'document'}
-                        className="p-2 bg-white/10 rounded-full hover:bg-white/20 text-white"
-                        title="Télécharger"
-                      >
-                        <Download className="h-5 w-5" />
-                      </a>
-                      <button
-                        onClick={() => setPreviewFile(null)}
-                        className="p-2 bg-white/10 rounded-full hover:bg-white/20 text-white"
-                      >
-                        <X className="h-5 w-5" />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="flex-1 flex flex-col items-center justify-center p-2 sm:p-4 overflow-auto">
-                    {previewFile.type?.startsWith('image/') ? (
-                      <img
-                        src={previewBlobUrl || previewFile.data}
-                        alt={previewFile.name}
-                        className="max-w-full max-h-full object-contain rounded-lg"
-                      />
-                    ) : previewFile.type === 'application/pdf' ? (
-                      <div className="w-full h-full flex flex-col items-center justify-center gap-3">
-                        <iframe
-                          src={previewBlobUrl || previewFile.data}
-                          title={previewFile.name}
-                          className="w-full flex-1 rounded-lg bg-white"
-                        />
-                        <a
-                          href={previewBlobUrl || previewFile.data}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="sm:hidden w-full py-3 bg-blue-600 text-white rounded-xl font-semibold text-center flex items-center justify-center gap-2 shadow-lg"
-                        >
-                          <Eye className="h-5 w-5" /> Ouvrir le PDF en plein écran
-                        </a>
-                      </div>
-                    ) : (
-                      <div className="text-center text-white space-y-4 p-6">
-                        <FileText className="h-16 w-16 mx-auto text-blue-400" />
-                        <p className="font-medium text-lg">{previewFile.name}</p>
-                        <p className="text-sm text-slate-300">Appuyez ci-dessous pour ouvrir ou télécharger ce document sur votre appareil.</p>
-                        <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                          <a
-                            href={previewBlobUrl || previewFile.data}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 rounded-xl font-semibold hover:bg-blue-500"
-                          >
-                            <Eye className="h-5 w-5" /> Ouvrir le document
-                          </a>
-                          <a
-                            href={previewBlobUrl || previewFile.data}
-                            download={previewFile.name}
-                            className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-white/15 rounded-xl font-semibold hover:bg-white/25"
-                          >
-                            <Download className="h-5 w-5" /> Télécharger
-                          </a>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
