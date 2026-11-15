@@ -282,7 +282,25 @@
           return acc;
         }, {});
 
-        if (!searchQuery) return grouped;
+        // Fonction de comparaison alphabétique insensible aux accents et à la casse
+        const sortAlpha = (a, b) => a.localeCompare(b, 'fr', { sensitivity: 'base' });
+
+        // Tri alphabétique des sous-menus à l'intérieur de chaque site
+        Object.keys(grouped).forEach((site) => {
+          grouped[site].sort((a, b) => sortAlpha(a.subMenu || '', b.subMenu || ''));
+        });
+
+        // Construction de l'objet trié par ordre alphabétique des sites
+        const sortObjectByKeys = (obj) => {
+          return Object.keys(obj)
+            .sort(sortAlpha)
+            .reduce((sortedAcc, key) => {
+              sortedAcc[key] = obj[key];
+              return sortedAcc;
+            }, {});
+        };
+
+        if (!searchQuery) return sortObjectByKeys(grouped);
 
         const normalize = (str) => {
           return str ? String(str).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() : "";
@@ -308,13 +326,13 @@
           }
         });
 
-        return filtered;
+        return sortObjectByKeys(filtered);
       }, [items, searchQuery]);
 
       const uniqueSites = useMemo(() => Object.keys(items.reduce((acc, item) => {
         if (item.siteName) acc[item.siteName] = true;
         return acc;
-      }, {})), [items]);
+      }, {})).sort((a, b) => a.localeCompare(b, 'fr', { sensitivity: 'base' })), [items]);
 
       // --- Actions ---
       const showToast = (message) => {
@@ -322,7 +340,7 @@
         setTimeout(() => setToastMessage(''), 3000);
       };
 
-      const handleCopyValue = async (value, label = "Texte") => {
+      const handleCopyValue = async (value, label = "Valeur") => {
         if (!value) return;
         try {
           if (navigator.clipboard && window.isSecureContext) {
@@ -330,7 +348,10 @@
           } else {
             const textArea = document.createElement("textarea");
             textArea.value = value;
+            textArea.style.position = "fixed";
+            textArea.style.left = "-999999px";
             document.body.appendChild(textArea);
+            textArea.focus();
             textArea.select();
             document.execCommand('copy');
             document.body.removeChild(textArea);
