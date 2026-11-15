@@ -505,12 +505,12 @@
           style={{ backgroundImage: "url('./ai-generated-8783105_640.jpg')" }}
         >
           {/* Voile léger pour laisser ressortir l'image de fond tout en gardant la lisibilité */}
-          <div className="min-h-screen bg-[#07101E]/35 flex flex-col justify-center">
+          <div className="min-h-screen bg-[#07101E]/25 flex flex-col justify-center">
             
-            <div className="max-w-md w-full mx-auto bg-[#0A1628]/45 backdrop-blur-sm min-h-screen relative shadow-2xl shadow-black/70 flex flex-col overflow-hidden border-x border-white/10">
+            <div className="max-w-md w-full mx-auto bg-[#0A1628]/30 backdrop-blur-[2px] min-h-screen relative shadow-2xl shadow-black/70 flex flex-col overflow-hidden border-x border-white/15">
               
               {/* Header avec Logo en haut à gauche et boutons Sauvegarde/Restauration à droite */}
-              <header className="px-6 pt-8 pb-4 bg-[#0A1628]/60 backdrop-blur-md flex items-center justify-between z-10 sticky top-0 border-b border-white/10">
+              <header className="px-6 pt-8 pb-4 bg-[#0A1628]/40 backdrop-blur-md flex items-center justify-between z-10 sticky top-0 border-b border-white/15">
                 <div className="flex items-center">
                   <img 
                     src="./ai-generated-8783105_640.jpg" 
@@ -557,12 +557,12 @@
               {/* Liste principale */}
               <main className="flex-1 px-4 pb-24 overflow-y-auto space-y-4 custom-scrollbar">
                 {Object.keys(filteredAndGroupedData).length === 0 ? (
-                  <div className="text-center py-12 px-6 bg-[#0A1628]/40 backdrop-blur-md rounded-3xl mx-2 border border-white/10">
+                  <div className="text-center py-12 px-6 bg-[#0A1628]/35 backdrop-blur-md rounded-3xl mx-2 border border-white/15">
                     <div className="bg-white/10 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
                       <Folder className="h-8 w-8 text-blue-300" />
                     </div>
-                    <p className="text-white font-medium text-lg">Aucun résultat trouvé</p>
-                    <p className="text-slate-300 text-sm mt-2">Essayez un autre mot-clé ou ajoutez un nouvel accès avec le bouton +.</p>
+                    <p className="text-white font-medium text-lg drop-shadow">Aucun résultat trouvé</p>
+                    <p className="text-slate-200 text-sm mt-2 drop-shadow-sm">Essayez un autre mot-clé ou ajoutez un nouvel accès avec le bouton +.</p>
                   </div>
                 ) : (
                   Object.entries(filteredAndGroupedData).map(([siteName, subMenus], index) => {
@@ -571,7 +571,7 @@
                     return (
                       <div 
                         key={siteName} 
-                        className={`bg-[#0A1628]/65 backdrop-blur-md border border-white/15 rounded-2xl overflow-hidden transition-all duration-300 shadow-lg ${isExpanded ? 'ring-2 ring-blue-400/50 shadow-blue-950/50' : 'hover:bg-[#0A1628]/75 hover:shadow-xl'}`}
+                        className={`bg-[#0A1628]/40 backdrop-blur-md border border-white/20 rounded-2xl overflow-hidden transition-all duration-300 shadow-lg ${isExpanded ? 'ring-2 ring-blue-400/50 shadow-blue-950/50' : 'hover:bg-[#0A1628]/50 hover:shadow-xl'}`}
                         style={{ animationDelay: `${index * 50}ms` }}
                       >
                         {/* En-tête du Site */}
@@ -580,10 +580,10 @@
                             onClick={() => toggleSite(siteName)}
                             className="flex-1 flex items-center space-x-3 sm:space-x-4 focus:outline-none text-left min-w-0"
                           >
-                            <div className="bg-blue-500/20 border border-blue-400/30 p-2 sm:p-2.5 rounded-xl text-blue-300 shrink-0">
+                            <div className="bg-blue-500/25 border border-blue-400/30 p-2 sm:p-2.5 rounded-xl text-blue-200 shrink-0">
                               <MapPin className="h-5 w-5 sm:h-6 sm:w-6" />
                             </div>
-                            <span className="text-base sm:text-lg font-semibold text-white drop-shadow-sm truncate">{siteName}</span>
+                            <span className="text-base sm:text-lg font-semibold text-white drop-shadow truncate">{siteName}</span>
                           </button>
                           <div className="flex items-center space-x-1 sm:space-x-2 shrink-0">
                             <button 
@@ -611,19 +611,19 @@
 
                         {/* Sous-menus */}
                         <div 
-                          className={`transition-all duration-300 ease-in-out bg-black/25 border-t border-white/10 ${isExpanded ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0 overflow-hidden'}`}
+                          className={`transition-all duration-300 ease-in-out bg-black/15 border-t border-white/15 ${isExpanded ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0 overflow-hidden'}`}
                         >
                           {subMenus.map((sub) => (
                             <div
                               key={sub.id}
-                              className="w-full flex items-center justify-between hover:bg-white/10 transition-colors border-b border-white/10 last:border-0"
+                              className="w-full flex items-center justify-between hover:bg-white/15 transition-colors border-b border-white/10 last:border-0"
                             >
                               <button
                                 onClick={() => setSelectedCodeItem(sub)}
                                 className="flex-1 px-4 sm:px-6 py-4 flex items-center justify-between focus:outline-none text-left min-w-0"
                               >
-                                <span className="font-medium text-slate-100 drop-shadow-sm truncate pr-2">{sub.subMenu}</span>
-                                <ChevronRight className="h-4 w-4 text-slate-300 shrink-0" />
+                                <span className="font-medium text-white drop-shadow truncate pr-2">{sub.subMenu}</span>
+                                <ChevronRight className="h-4 w-4 text-slate-200 shrink-0" />
                               </button>
                               <div className="flex items-center pr-2 shrink-0">
                                 <button
